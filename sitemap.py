@@ -40,7 +40,7 @@ class BaseSitemapParser:
     def _parse_sitemap_urls(
         self, xml: str, base_url: str
     ) -> tuple[list[str], list[str]]:
-        soup = BeautifulSoup(xml, features="lxml")
+        soup = BeautifulSoup(xml, "lxml-xml")
 
         sitemap_entries = soup.findAll(["sitemap", "url"])
 
