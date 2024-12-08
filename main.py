@@ -4,6 +4,7 @@ from ingredient_parser import parse_ingredient
 from robots import RobotFileManager
 
 from sitemap import SitemapParserFactory
+from util import singularise_word
 import asyncio
 
 USER_AGENT = (
@@ -12,18 +13,18 @@ USER_AGENT = (
 
 
 async def main():
-    url = "https://www.tasty.co"
+    url = "https://www.bbcgoodfood.com"
     robot_file_manager = RobotFileManager(url)
     if (sitemap := robot_file_manager.sitemap) is None:
+        # TODO: generate sitemap if not found
         raise RuntimeError(f"No sitemap found for url: {url}")
-    print(sitemap)
     sitemap_parser = SitemapParserFactory.from_xml_url(sitemap)
     print(type(sitemap_parser))
     sitemap_parser.user_agent = USER_AGENT
     recipe_urls = await sitemap_parser.get_recipe_urls()
     print(len(recipe_urls))
     print(len(robot_file_manager.filter_urls(recipe_urls)))
-    url = recipe_urls[0]
+    url = recipe_urls[-1]
     print(url)
     html = httpx.get(url, headers={"User-Agent": USER_AGENT}).text
     scraper = scrape_html(html, org_url=url)
@@ -33,8 +34,10 @@ async def main():
         for i in ingredients
         for food in parse_ingredient(i, foundation_foods=True).foundation_foods
     ]
+    stem_ingredients = [singularise_word(i) for i in parsed_ingredients]
     print(ingredients)
     print(parsed_ingredients)
+    print(stem_ingredients)
 
 
 if __name__ == "__main__":

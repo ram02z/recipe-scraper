@@ -9,6 +9,7 @@ class RobotFileManager:
         self.og_url = url
         parsed_url = urlparse(url)
         self.base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        self.path = parsed_url.path
         robots_url = urljoin(self.base_url, "/robots.txt")
 
         self.rp = RobotFileParser(robots_url)
@@ -20,12 +21,11 @@ class RobotFileManager:
         if not rp_site_maps:
             return None
 
-        for sm_url in rp_site_maps:
-            parsed_sm_url = urlparse(sm_url)
-            if not parsed_sm_url.path:
-                continue
-            if sm_url.startswith(self.og_url):
-                return sm_url
+        if self.path:
+            for sm_url in rp_site_maps:
+                parsed_sm_url = urlparse(sm_url)
+                if sm_url.startswith(self.og_url):
+                    return sm_url
 
         for sm_url in rp_site_maps:
             parsed_sm_url = urlparse(sm_url)

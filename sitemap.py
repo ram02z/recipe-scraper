@@ -7,15 +7,17 @@ import asyncio
 
 
 class BaseSitemapParser:
-    def __init__(self, xml_url: str, max_depth: int = 3, timeout: int = 10) -> None:
+    recipe_path_pattern: str = ""
+
+    def __init__(self, xml_url: str, max_depth: int = 3, timeout: int = 60) -> None:
         self._user_agent = None
         self.xml_url = xml_url
         self.max_depth = max_depth
         self.timeout = timeout
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def is_valid_recipe_path(self, path: str) -> bool:
-        raise NotImplementedError()
+    def _is_valid_recipe_path(self, path: str) -> bool:
+        return bool(re.search(self.recipe_path_pattern, path))
 
     @staticmethod
     def host() -> str:
@@ -44,8 +46,8 @@ class BaseSitemapParser:
             )
             response.raise_for_status()
             return response.text
-        except (httpx.HTTPError, asyncio.TimeoutError) as e:
-            self.logger.error(f"Error fetching {url}: {e}")
+        except httpx.HTTPError as exc:
+            self.logger.error(f"Error while requesting {exc.request.url!r}.")
             return None
 
     def _parse_sitemap_urls(
@@ -71,7 +73,7 @@ class BaseSitemapParser:
                     parsed_url = urlparse(url)
                     path = parsed_url.path
 
-                    if self.is_valid_recipe_path(path):
+                    if self._is_valid_recipe_path(path):
                         urls.append(url)
 
         return urls, subsitemap_urls
@@ -116,56 +118,57 @@ class BaseSitemapParser:
 
 
 class GenericSitemapParser(BaseSitemapParser):
-    def is_valid_recipe_path(self, path: str) -> bool:
-        return path != ""
+    recipe_path_pattern = "^(.*)$"
 
 
 class BBCSitemapParser(BaseSitemapParser):
-    RECIPE_PATH_PATTERN = r"^(.*)_(\d+)$"
+    recipe_path_pattern = r"^(.*)/recipes/(.*)_(\d+)$"
 
     @staticmethod
     def host() -> str:
         return "bbc.co.uk"
 
-    def is_valid_recipe_path(self, path: str) -> bool:
-        path_parts = path.strip("/").split("/")
-        return "recipes" in path_parts and bool(
-            re.search(self.RECIPE_PATH_PATTERN, path_parts[-1])
-        )
-
 
 class TastySitemapParser(BaseSitemapParser):
+    recipe_path_pattern = r"^(.*)/recipe/(.*)$"
+
     @staticmethod
     def host() -> str:
         return "tasty.co"
 
-    def is_valid_recipe_path(self, path: str) -> bool:
-        path_parts = path.strip("/").split("/")
-        return "recipe" in path_parts
-
 
 class AllRecipesSitemapParser(BaseSitemapParser):
-    RECIPE_PATH_PATTERN = r"^(.*)-recipe-(\d+)$"
+    recipe_path_pattern = r"^(.*)-recipe-(\d+)$|^(.*)/recipe/(\d+)/(.*)$"
 
     @staticmethod
     def host() -> str:
         return "allrecipes.com"
 
-    def is_valid_recipe_path(self, path: str) -> bool:
-        path_parts = path.strip("/").split("/")
-        return "recipe" in path_parts or bool(
-            re.search(self.RECIPE_PATH_PATTERN, path_parts[-1])
-        )
-
 
 class BonApetitSitemapParser(BaseSitemapParser):
+    recipe_path_pattern = r"^/recipe/(.*)$"
+
     @staticmethod
     def host() -> str:
         return "bonappetit.com"
 
-    def is_valid_recipe_path(self, path: str) -> bool:
-        path_parts = path.strip("/").split("/")
-        return "recipe" in path_parts
+
+class EpicuriousSitemapParser(BaseSitemapParser):
+    recipe_path_pattern = r"^/recipes/food/(.*)$"
+
+    @staticmethod
+    def host() -> str:
+        return "epicurious.com"
+
+
+class BBCGoodFoodSitemapParser(BaseSitemapParser):
+    recipe_path_pattern = (
+        r"^/(premium|recipes)/(?!.*recipes$)[a-z]+(-[a-z]+){0,7}$"
+    )
+
+    @staticmethod
+    def host() -> str:
+        return "bbcgoodfood.com"
 
 
 class SitemapParserFactory:
@@ -174,6 +177,8 @@ class SitemapParserFactory:
         TastySitemapParser.host(): TastySitemapParser,
         AllRecipesSitemapParser.host(): AllRecipesSitemapParser,
         BonApetitSitemapParser.host(): BonApetitSitemapParser,
+        EpicuriousSitemapParser.host(): EpicuriousSitemapParser,
+        BBCGoodFoodSitemapParser.host(): BBCGoodFoodSitemapParser,
     }
 
     @classmethod
