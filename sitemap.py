@@ -8,6 +8,7 @@ import asyncio
 
 class BaseSitemapParser:
     def __init__(self, xml_url: str, max_depth: int = 3, timeout: int = 10) -> None:
+        self._user_agent = None
         self.xml_url = xml_url
         self.max_depth = max_depth
         self.timeout = timeout
@@ -20,16 +21,26 @@ class BaseSitemapParser:
     def host() -> str:
         raise NotImplementedError()
 
+    @property
+    def user_agent(self) -> str | None:
+        return self._user_agent
+
+    @user_agent.setter
+    def user_agent(self, val: str):
+        self._user_agent = val
+
     async def _fetch_xml(self, url: str, client: httpx.AsyncClient) -> str | None:
         try:
+            headers = {
+                "Accept": "application/xml, text/xml",
+                "Accept-Encoding": "gzip, deflate, br",
+            }
+            if self.user_agent:
+                headers["User-Agent"] = self.user_agent
             response = await client.get(
                 url,
                 timeout=self.timeout,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:86.0) Gecko/20100101 Firefox/86.0",
-                    "Accept": "application/xml, text/xml",
-                    "Accept-Encoding": "gzip, deflate, br",
-                },
+                headers=headers,
             )
             response.raise_for_status()
             return response.text
@@ -114,7 +125,7 @@ class BBCSitemapParser(BaseSitemapParser):
 
     @staticmethod
     def host() -> str:
-        return "www.bbc.co.uk"
+        return "bbc.co.uk"
 
     def is_valid_recipe_path(self, path: str) -> bool:
         path_parts = path.strip("/").split("/")
@@ -126,7 +137,7 @@ class BBCSitemapParser(BaseSitemapParser):
 class TastySitemapParser(BaseSitemapParser):
     @staticmethod
     def host() -> str:
-        return "www.tasty.co"
+        return "tasty.co"
 
     def is_valid_recipe_path(self, path: str) -> bool:
         path_parts = path.strip("/").split("/")
@@ -138,7 +149,7 @@ class AllRecipesSitemapParser(BaseSitemapParser):
 
     @staticmethod
     def host() -> str:
-        return "www.allrecipes.com"
+        return "allrecipes.com"
 
     def is_valid_recipe_path(self, path: str) -> bool:
         path_parts = path.strip("/").split("/")
@@ -150,7 +161,7 @@ class AllRecipesSitemapParser(BaseSitemapParser):
 class BonApetitSitemapParser(BaseSitemapParser):
     @staticmethod
     def host() -> str:
-        return "www.bonappetit.com"
+        return "bonappetit.com"
 
     def is_valid_recipe_path(self, path: str) -> bool:
         path_parts = path.strip("/").split("/")
@@ -167,8 +178,8 @@ class SitemapParserFactory:
 
     @classmethod
     def from_xml_url(cls, url: str) -> BaseSitemapParser:
-        parsed_url = urlparse(url)
-        domain = parsed_url.netloc.lower()
+        domain = urlparse(url).netloc.lower()
+        domain = domain.split("www.")[1] if domain.startswith("www.") else domain
 
         parser_class = cls.SITEMAPS.get(domain, GenericSitemapParser)
 
