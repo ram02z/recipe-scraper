@@ -7,7 +7,7 @@ import asyncio
 
 
 class BaseSitemapParser:
-    recipe_path_pattern: str = ""
+    recipe_path_pattern: re.Pattern[str]
 
     def __init__(self, xml_url: str, max_depth: int = 3, timeout: int = 60) -> None:
         self._user_agent = None
@@ -17,7 +17,7 @@ class BaseSitemapParser:
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def _is_valid_recipe_path(self, path: str) -> bool:
-        return bool(re.search(self.recipe_path_pattern, path))
+        return bool(self.recipe_path_pattern.search(path))
 
     @staticmethod
     def host() -> str:
@@ -118,11 +118,11 @@ class BaseSitemapParser:
 
 
 class GenericSitemapParser(BaseSitemapParser):
-    recipe_path_pattern = "^(.*)$"
+    recipe_path_pattern = re.compile("^(.*)$")
 
 
 class BBCSitemapParser(BaseSitemapParser):
-    recipe_path_pattern = r"^(.*)/recipes/(.*)_(\d+)$"
+    recipe_path_pattern = re.compile("^(.*)/recipes/(.*)_(\\d+)$")
 
     @staticmethod
     def host() -> str:
@@ -130,7 +130,7 @@ class BBCSitemapParser(BaseSitemapParser):
 
 
 class TastySitemapParser(BaseSitemapParser):
-    recipe_path_pattern = r"^(.*)/recipe/(.*)$"
+    recipe_path_pattern = re.compile("^(.*)/recipe/(.*)$")
 
     @staticmethod
     def host() -> str:
@@ -138,7 +138,7 @@ class TastySitemapParser(BaseSitemapParser):
 
 
 class AllRecipesSitemapParser(BaseSitemapParser):
-    recipe_path_pattern = r"^(.*)-recipe-(\d+)$|^(.*)/recipe/(\d+)/(.*)$"
+    recipe_path_pattern = re.compile("^(.*)-recipe-(\\d+)$|^(.*)/recipe/(\\d+)/(.*)$")
 
     @staticmethod
     def host() -> str:
@@ -146,7 +146,7 @@ class AllRecipesSitemapParser(BaseSitemapParser):
 
 
 class BonApetitSitemapParser(BaseSitemapParser):
-    recipe_path_pattern = r"^/recipe/(.*)$"
+    recipe_path_pattern = re.compile("^/recipe/(.*)$")
 
     @staticmethod
     def host() -> str:
@@ -154,7 +154,7 @@ class BonApetitSitemapParser(BaseSitemapParser):
 
 
 class EpicuriousSitemapParser(BaseSitemapParser):
-    recipe_path_pattern = r"^/recipes/food/(.*)$"
+    recipe_path_pattern = re.compile("^/recipes/food/(.*)$")
 
     @staticmethod
     def host() -> str:
@@ -162,8 +162,8 @@ class EpicuriousSitemapParser(BaseSitemapParser):
 
 
 class BBCGoodFoodSitemapParser(BaseSitemapParser):
-    recipe_path_pattern = (
-        r"^/(premium|recipes)/(?!.*recipes$)[a-z]+(-[a-z]+){0,7}$"
+    recipe_path_pattern = re.compile(
+        "^/(premium|recipes)/(?!.*recipes$)[a-z]+(-[a-z]+){0,7}$"
     )
 
     @staticmethod
