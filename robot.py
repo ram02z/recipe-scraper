@@ -1,5 +1,5 @@
 from urllib.parse import urljoin, urlparse
-from urllib.robotparser import RobotFileParser
+from robots.robotparser import RobotFileParser
 
 
 class RobotFileManager:

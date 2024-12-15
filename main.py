@@ -1,7 +1,7 @@
 from recipe_scrapers import scrape_html
 import httpx
 from ingredient_parser import parse_ingredient
-from robots import RobotFileManager
+from robot import RobotFileManager
 
 from sitemap import SitemapParserFactory
 from util import singularise_word
@@ -13,7 +13,7 @@ USER_AGENT = (
 
 
 async def main():
-    url = "https://www.bbcgoodfood.com"
+    url = "https://food52.com"
     robot_file_manager = RobotFileManager(url)
     if (sitemap := robot_file_manager.sitemap) is None:
         # TODO: generate sitemap if not found
@@ -24,7 +24,7 @@ async def main():
     recipe_urls = await sitemap_parser.get_recipe_urls()
     print(len(recipe_urls))
     print(len(robot_file_manager.filter_urls(recipe_urls)))
-    url = recipe_urls[-1]
+    url = recipe_urls[0]
     print(url)
     html = httpx.get(url, headers={"User-Agent": USER_AGENT}).text
     scraper = scrape_html(html, org_url=url)

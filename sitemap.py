@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import logging
 import httpx
 import asyncio
+import gzip
 
 
 class BaseSitemapParser:
@@ -45,6 +46,9 @@ class BaseSitemapParser:
                 headers=headers,
             )
             response.raise_for_status()
+            if "application/x-gzip" in response.headers.get("content-type"):
+                content = gzip.decompress(response.content)
+                return content.decode()
             return response.text
         except httpx.HTTPError as exc:
             self.logger.error(f"Error while requesting {exc.request.url!r}.")
@@ -171,6 +175,46 @@ class BBCGoodFoodSitemapParser(BaseSitemapParser):
         return "bbcgoodfood.com"
 
 
+class TheSpruceEatsSitemapParser(BaseSitemapParser):
+    recipe_path_pattern = re.compile("^[a-z]+(-[a-z]+){0,7}-\\d+$")
+
+    @staticmethod
+    def host() -> str:
+        return "thespruceeats.com"
+
+
+class FoodSitemapParser(BaseSitemapParser):
+    recipe_path_pattern = re.compile("^/recipe/[a-z]+(-[a-z]+){0,7}-\\d+$")
+
+    @staticmethod
+    def host() -> str:
+        return "food.com"
+
+
+class CookWellSitemapParser(BaseSitemapParser):
+    recipe_path_pattern = re.compile("^/recipe/[a-z]+(-[a-z]+){0,7}$")
+
+    @staticmethod
+    def host() -> str:
+        return "cookwell.com"
+
+
+class NYTCookingSitemapParser(BaseSitemapParser):
+    recipe_path_pattern = re.compile("^/recipes/[\\d]+(-[a-z]+){0,7}$")
+
+    @staticmethod
+    def host() -> str:
+        return "nytimes.com"
+
+
+class Food52SitemapParser(BaseSitemapParser):
+    recipe_path_pattern = re.compile("^/recipes/[\\d]{2,7}+(-[a-z]+){0,7}$")
+
+    @staticmethod
+    def host() -> str:
+        return "food52.com"
+
+
 class SitemapParserFactory:
     SITEMAPS = {
         BBCSitemapParser.host(): BBCSitemapParser,
@@ -179,6 +223,11 @@ class SitemapParserFactory:
         BonApetitSitemapParser.host(): BonApetitSitemapParser,
         EpicuriousSitemapParser.host(): EpicuriousSitemapParser,
         BBCGoodFoodSitemapParser.host(): BBCGoodFoodSitemapParser,
+        TheSpruceEatsSitemapParser.host(): TheSpruceEatsSitemapParser,
+        FoodSitemapParser.host(): FoodSitemapParser,
+        CookWellSitemapParser.host(): CookWellSitemapParser,
+        NYTCookingSitemapParser.host(): NYTCookingSitemapParser,
+        Food52SitemapParser.host(): Food52SitemapParser,
     }
 
     @classmethod
