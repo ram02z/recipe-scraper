@@ -4,6 +4,7 @@ def singularise_word(word):
         ("ss", "ss"),
         ("is", "is"),
         ("'s", "'s"),
+        ("oes", "o"),
         ("ies", "y"),
         ("es", "e"),
         ("s", ""),
