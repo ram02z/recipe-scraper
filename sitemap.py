@@ -1,6 +1,6 @@
 import re
 from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup
+from parsel import Selector
 import logging
 import httpx
 import asyncio
@@ -57,28 +57,25 @@ class BaseSitemapParser:
     def _parse_sitemap_urls(
         self, xml: str, base_url: str
     ) -> tuple[list[str], list[str]]:
-        soup = BeautifulSoup(xml, "lxml-xml")
+        selector = Selector(xml)
 
-        sitemap_entries = soup.findAll(["sitemap", "url"])
+        loc_elements = selector.xpath("//sitemap/loc | //url/loc")
 
         urls = []
         subsitemap_urls = []
 
-        for entry in sitemap_entries:
-            if entry.name == "sitemap":
-                loc = entry.find("loc")
-                if loc:
-                    subsitemap_url = loc.getText("", True)
-                    subsitemap_urls.append(urljoin(base_url, subsitemap_url))
-            else:
-                loc = entry.find("loc")
-                if loc:
-                    url = loc.getText("", True)
-                    parsed_url = urlparse(url)
-                    path = parsed_url.path
+        for loc_element in loc_elements:
+            url = loc_element.xpath("./text()").get()
+            if not url:
+                continue
+            parsed_url = urlparse(url.strip())
+            path = parsed_url.path
 
-                    if self._is_valid_recipe_path(path):
-                        urls.append(url)
+            parent_tag_name = loc_element.xpath("name(..)").get()
+            if parent_tag_name == "sitemap":
+                subsitemap_urls.append(urljoin(base_url, url))
+            elif self._is_valid_recipe_path(path):
+                urls.append(url)
 
         return urls, subsitemap_urls
 
