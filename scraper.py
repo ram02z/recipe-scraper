@@ -1,7 +1,6 @@
 from typing import Optional
 import json
 from parsel import Selector
-from recipe_scrapers import scrape_html
 from curl_cffi import requests
 
 from models import Ingredient, Recipe
@@ -9,33 +8,27 @@ from models import Ingredient, Recipe
 
 def scrape_from_url(url: str) -> Recipe:
     html = fetch_html(url)
-    return scrape(html, url)
+    return scrape(html)
 
 
-def scrape(html: str, org_url: str) -> Recipe:
+def scrape(html: str) -> Recipe:
     selector = Selector(text=html)
     title: str = ""
     if site_title := selector.css("title::text").get():
         title = site_title
-    ingredients = []
-    directions = []
 
+    data: Optional[dict] = None
     if jsonld_scripts := selector.css(
         'script[type="application/ld+json"]::text'
     ).getall():
         jsonld_raw = merge_jsonld_scripts(jsonld_scripts)
-        jsonld_data = try_parse_jsonld(jsonld_raw)
-        title, ingredients, directions = extract_recipe_data(jsonld_data, title)
+        data = try_parse_jsonld(jsonld_raw)
     elif microdata := selector.css(
         '[itemscope][itemtype="http://schema.org/Recipe"]'
     ).get():
-        parsed_data = try_parse_microdata(Selector(text=microdata))
-        title, ingredients, directions = extract_recipe_data(parsed_data, title)
-    # TODO: remove recipe_scrapers fallback
-    else:
-        title, ingredients, directions = scrape_fallback(html, org_url, title)
+        data = try_parse_microdata(Selector(text=microdata))
 
-    return Recipe(title=title, ingredients=ingredients, directions=directions)
+    return extract_recipe_data(data, title)
 
 
 def fetch_html(url: str) -> str:
@@ -98,6 +91,7 @@ def try_parse_jsonld(element) -> Optional[dict]:
             return main_entity
 
 
+# FIXME: parse recipe only
 def try_parse_microdata(element) -> Optional[dict]:
     if not element.css("[itemscope]"):
         return None
@@ -115,25 +109,14 @@ def try_parse_microdata(element) -> Optional[dict]:
     return {"properties": properties}
 
 
-def scrape_fallback(html: str, url: str, title: str) -> tuple[str, list, list]:
-    scraped_data = scrape_html(html, org_url=url).to_json()
-    return (
-        scraped_data.get("title", title),
-        scraped_data.get("ingredients", []),
-        scraped_data.get("instructions", []),
-    )
-
-
 # https://schema.org/Recipe
-def extract_recipe_data(
-    data: Optional[dict], fallback_title: str
-) -> tuple[str, list[Ingredient], list[str]]:
+def extract_recipe_data(data: Optional[dict], fallback_title: str) -> Recipe:
     if not data:
-        return fallback_title, [], []
+        return Recipe(fallback_title, [], [])
     title = data.get("name", fallback_title)
     ingredients = [Ingredient(name=item) for item in data.get("recipeIngredient", [])]
     directions = extract_directions(data.get("recipeInstructions", []))
-    return title, ingredients, directions
+    return Recipe(title, ingredients, directions)
 
 
 def extract_directions(instructions) -> list[str]:
