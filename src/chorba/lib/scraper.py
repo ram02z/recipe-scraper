@@ -3,7 +3,7 @@ import json
 from parsel import Selector
 from curl_cffi import requests
 
-from models import Ingredient, Recipe
+from chorba.lib.models import Ingredient, Recipe
 
 
 def scrape_from_url(url: str) -> Recipe:

@@ -1,8 +1,9 @@
 import re
 from urllib.parse import urljoin, urlparse
+from curl_cffi.requests import AsyncSession
+from curl_cffi.requests.exceptions import HTTPError
 from parsel import Selector
 import logging
-import httpx
 import asyncio
 import gzip
 
@@ -11,7 +12,6 @@ class BaseSitemapParser:
     recipe_path_pattern: re.Pattern[str]
 
     def __init__(self, xml_url: str, max_depth: int = 3, timeout: int = 60) -> None:
-        self._user_agent = None
         self.xml_url = xml_url
         self.max_depth = max_depth
         self.timeout = timeout
@@ -32,26 +32,22 @@ class BaseSitemapParser:
     def user_agent(self, val: str):
         self._user_agent = val
 
-    async def _fetch_xml(self, url: str, client: httpx.AsyncClient) -> str | None:
+    async def _fetch_xml(self, url: str, session: AsyncSession) -> str | None:
         try:
             headers = {
                 "Accept": "application/xml, text/xml",
                 "Accept-Encoding": "gzip, deflate, br",
             }
-            if self.user_agent:
-                headers["User-Agent"] = self.user_agent
-            response = await client.get(
-                url,
-                timeout=self.timeout,
-                headers=headers,
+            response = await session.get(
+                url, timeout=self.timeout, headers=headers, impersonate="chrome"
             )
             response.raise_for_status()
             if "application/x-gzip" in response.headers.get("content-type"):
                 content = gzip.decompress(response.content)
                 return content.decode()
             return response.text
-        except httpx.HTTPError as exc:
-            self.logger.error(f"Error while requesting {exc.request.url!r}.")
+        except HTTPError as exc:
+            self.logger.error(f"Error while requesting {url}. Error code {exc.code}.")
             return None
 
     def _parse_sitemap_urls(
@@ -80,13 +76,13 @@ class BaseSitemapParser:
         return urls, subsitemap_urls
 
     async def _process_sitemap(
-        self, url: str, client: httpx.AsyncClient, current_depth: int = 0
+        self, url: str, session: AsyncSession, current_depth: int = 0
     ) -> list[str]:
         if current_depth >= self.max_depth:
             self.logger.warning(f"Max depth reached for {url}")
             return []
 
-        xml = await self._fetch_xml(url, client)
+        xml = await self._fetch_xml(url, session)
         if not xml:
             return []
 
@@ -94,7 +90,7 @@ class BaseSitemapParser:
 
         if subsitemap_urls:
             subsitemap_tasks = [
-                self._process_subsitemap(subsitemap_url, client, current_depth)
+                self._process_subsitemap(subsitemap_url, session, current_depth)
                 for subsitemap_url in subsitemap_urls
             ]
             subsitemap_results = await asyncio.gather(*subsitemap_tasks)
@@ -105,17 +101,17 @@ class BaseSitemapParser:
         return urls
 
     async def _process_subsitemap(
-        self, subsitemap_url: str, client: httpx.AsyncClient, current_depth: int
+        self, subsitemap_url: str, session: AsyncSession, current_depth: int
     ) -> list[str]:
         subsitemap_parser = SitemapParserFactory.from_xml_url(subsitemap_url)
 
         return await subsitemap_parser._process_sitemap(
-            subsitemap_url, client, current_depth + 1
+            subsitemap_url, session, current_depth + 1
         )
 
     async def get_recipe_urls(self) -> list[str]:
-        async with httpx.AsyncClient() as client:
-            return await self._process_sitemap(self.xml_url, client)
+        async with AsyncSession() as session:
+            return await self._process_sitemap(self.xml_url, session)
 
 
 class GenericSitemapParser(BaseSitemapParser):
