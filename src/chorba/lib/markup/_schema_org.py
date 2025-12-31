@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from pydantic import Field, computed_field
+from pydantic.dataclasses import dataclass
 
 
 @dataclass
@@ -9,21 +10,24 @@ class Ingredient:
 @dataclass
 class Recipe:
     PROPERTY_FIELDS = ["name", "recipeIngredient", "recipeInstructions"]
-    _data: dict
+    _data: dict = Field(exclude=True)
 
     def __init__(self, data: dict) -> None:
         self._data = data
 
+    @computed_field
     @property
     def title(self) -> str:
         return self._data.get("name", "")
 
+    @computed_field
     @property
     def ingredients(self) -> list[Ingredient]:
         return [
             Ingredient(name=item) for item in self._data.get("recipeIngredient", [])
         ]
 
+    @computed_field
     @property
     def directions(self) -> list[str]:
         recipeInstructions = self._data.get("recipeInstructions", [])

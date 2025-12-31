@@ -2,8 +2,8 @@ from typing import Optional
 import extruct
 from curl_cffi import requests
 
-from _schema_org import Recipe
-from _processors import (
+from chorba.lib.markup._schema_org import Recipe
+from chorba.lib.markup._processors import (
     SyntaxProcessor,
     JSONLDProcessor,
     MicrodataProcessor,
@@ -27,13 +27,18 @@ class RecipeScraper:
         response = requests.get(url, impersonate="chrome")
         html = response.text
 
+        return self.scrape(html)
+
+    def scrape(self, html: str) -> Optional[Recipe]:
         extracted_data = extruct.extract(html, syntaxes=self.syntax_names)
 
         for processor in self._processors:
             if processor.syntax_name not in extracted_data:
                 continue
 
-            data = extracted_data.get(processor.syntax_name, [])
+            data = extracted_data.get(processor.syntax_name)
+            if not data:
+                continue
             recipe_data = processor.extract_recipe(data)
 
             if recipe_data:

@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from _schema_org import Recipe
+from chorba.lib.markup._schema_org import Recipe
 
 
 class SyntaxProcessor(ABC):
@@ -11,7 +11,7 @@ class SyntaxProcessor(ABC):
         pass
 
     @abstractmethod
-    def extract_recipe(self, data: list) -> dict:
+    def extract_recipe(self, data: list[dict]) -> dict:
         """Extract recipe data from the parsed syntax data."""
         pass
 
@@ -21,16 +21,20 @@ class JSONLDProcessor(SyntaxProcessor):
     def syntax_name(self) -> str:
         return "json-ld"
 
-    def extract_recipe(self, data: list) -> dict:
-        context = "https://schema.org"
+    def extract_recipe(self, data: list[dict]) -> dict:
+        context = "schema.org"
         recipe_type = "Recipe"
 
         def is_recipe(item: dict) -> bool:
             if not isinstance(item, dict):
                 return False
-            c = item.get("@context")
-            t = item.get("@type")
-            return c == context and t == recipe_type
+            c = item.get("@context", "")
+            if context not in c:
+                return False
+            t = item.get("@type", "")
+            if isinstance(t, list):
+                return recipe_type in t
+            return t == recipe_type
 
         for item in data:
             if is_recipe(item):
@@ -44,9 +48,10 @@ class MicrodataProcessor(SyntaxProcessor):
     def syntax_name(self) -> str:
         return "microdata"
 
-    def extract_recipe(self, data: list) -> dict:
+    def extract_recipe(self, data: list[dict]) -> dict:
         for d in data:
-            if d.get("type") == "https://schema.org/Recipe":
+            data_type = d.get("type", "")
+            if "schema.org/Recipe" in data_type:
                 return d.get("properties", {})
         return {}
 
@@ -56,7 +61,7 @@ class RDFaProcessor(SyntaxProcessor):
     def syntax_name(self) -> str:
         return "rdfa"
 
-    def extract_recipe(self, data: list) -> dict:
+    def extract_recipe(self, data: list[dict]) -> dict:
         node_lookup = {item["@id"]: item for item in data if "@id" in item}
 
         recipe = None
@@ -97,7 +102,7 @@ class RDFaProcessor(SyntaxProcessor):
                     if referenced_node:
                         resolved_node = {}
                         for key, value in referenced_node.items():
-                            if key.startswith("http://schema.org/"):
+                            if "schema.org" in key:
                                 prop_name = key.split("/")[-1]
                                 resolved_node[prop_name] = resolve_value(value)
 
@@ -119,11 +124,12 @@ class RDFaProcessor(SyntaxProcessor):
             return data
 
         def extract_property(recipe_data: dict, schema_property: str):
-            full_property = f"http://schema.org/{schema_property}"
-            if full_property not in recipe_data:
-                return None
+            for protocol in ["https://", "http://"]:
+                full_property = f"{protocol}schema.org/{schema_property}"
+                if full_property in recipe_data:
+                    return resolve_value(recipe_data[full_property])
 
-            return resolve_value(recipe_data[full_property])
+            return None
 
         recipe_properties = Recipe.PROPERTY_FIELDS
         uniform_recipe = {}
