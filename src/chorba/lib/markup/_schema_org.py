@@ -1,5 +1,36 @@
-from pydantic import Field, computed_field
+from datetime import timedelta
+
+from pydantic import Field, TypeAdapter, computed_field
 from pydantic.dataclasses import dataclass
+
+
+timedelta_adapter = TypeAdapter(timedelta)
+
+
+def _parse_duration_ms(value: str | None) -> int | None:
+    if not value:
+        return None
+
+    try:
+        duration = timedelta_adapter.validate_python(value)
+    except Exception:
+        return None
+
+    return int(duration.total_seconds() * 1000)
+
+
+def _format_duration_ms(duration_ms: int | None) -> str | None:
+    if duration_ms is None or duration_ms == 0:
+        return None
+
+    total_minutes = duration_ms // 60000
+    hours, minutes = divmod(total_minutes, 60)
+
+    if hours == 0:
+        return f"{total_minutes} min"
+    if minutes == 0:
+        return f"{hours} hr"
+    return f"{hours} hr {minutes} min"
 
 
 @dataclass
@@ -9,7 +40,13 @@ class Ingredient:
 
 @dataclass
 class Recipe:
-    PROPERTY_FIELDS = ["name", "recipeIngredient", "recipeInstructions"]
+    PROPERTY_FIELDS = [
+        "name",
+        "recipeIngredient",
+        "recipeInstructions",
+        "prepTime",
+        "cookTime",
+    ]
     _data: dict = Field(exclude=True)
 
     def __init__(self, data: dict) -> None:
@@ -64,3 +101,21 @@ class Recipe:
                                 directions.append(f"  - {step.strip()}")
 
         return directions
+
+    @property
+    def _prep_time_ms(self) -> int | None:
+        return _parse_duration_ms(self._data.get("prepTime"))
+
+    @property
+    def _cook_time_ms(self) -> int | None:
+        return _parse_duration_ms(self._data.get("cookTime"))
+
+    @computed_field
+    @property
+    def time(self) -> str | None:
+        duration_ms = self._prep_time_ms or self._cook_time_ms
+
+        if self._prep_time_ms and self._cook_time_ms:
+            duration_ms = self._prep_time_ms + self._cook_time_ms
+
+        return _format_duration_ms(duration_ms)
