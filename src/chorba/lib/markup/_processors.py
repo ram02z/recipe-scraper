@@ -3,6 +3,38 @@ from abc import ABC, abstractmethod
 from chorba.lib.markup._schema_org import Recipe
 
 
+def _has_type(item: dict, schema_type: str) -> bool:
+    if not isinstance(item, dict):
+        return False
+
+    item_type = item.get("@type") or item.get("type", "")
+    if isinstance(item_type, list):
+        return schema_type in item_type or any(schema_type in t for t in item_type)
+    return item_type == schema_type or schema_type in item_type
+
+
+def _jsonld_nodes(data: list[dict]) -> list[dict]:
+    nodes = []
+
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        nodes.append(item)
+
+        graph = item.get("@graph", [])
+        if isinstance(graph, list):
+            nodes.extend(node for node in graph if isinstance(node, dict))
+
+    return nodes
+
+
+def _single_video_candidate(candidates: list[dict]) -> dict:
+    if len(candidates) == 1:
+        return candidates[0]
+    return {}
+
+
 class SyntaxProcessor(ABC):
     @property
     @abstractmethod
@@ -22,22 +54,19 @@ class JSONLDProcessor(SyntaxProcessor):
         return "json-ld"
 
     def extract_recipe(self, data: list[dict]) -> dict:
-        context = "schema.org"
-        recipe_type = "Recipe"
+        nodes = _jsonld_nodes(data)
 
         def is_recipe(item: dict) -> bool:
-            if not isinstance(item, dict):
-                return False
-            c = item.get("@context", "")
-            if context not in c:
-                return False
-            t = item.get("@type", "")
-            if isinstance(t, list):
-                return recipe_type in t
-            return t == recipe_type
+            return _has_type(item, "Recipe")
 
-        for item in data:
+        video_candidates = [item for item in nodes if _has_type(item, "VideoObject")]
+
+        for item in nodes:
             if is_recipe(item):
+                if not item.get("video"):
+                    maybe_video = _single_video_candidate(video_candidates)
+                    if maybe_video:
+                        item = {**item, "video": maybe_video}
                 return item
 
         return {}
@@ -49,10 +78,19 @@ class MicrodataProcessor(SyntaxProcessor):
         return "microdata"
 
     def extract_recipe(self, data: list[dict]) -> dict:
+        video_candidates = []
+
         for d in data:
             data_type = d.get("type", "")
+            if "schema.org/VideoObject" in data_type:
+                video_candidates.append(d.get("properties", {}))
             if "schema.org/Recipe" in data_type:
-                return d.get("properties", {})
+                recipe = d.get("properties", {})
+                if not recipe.get("video"):
+                    maybe_video = _single_video_candidate(video_candidates)
+                    if maybe_video:
+                        recipe = {**recipe, "video": maybe_video}
+                return recipe
         return {}
 
 
@@ -131,11 +169,33 @@ class RDFaProcessor(SyntaxProcessor):
 
             return None
 
+        video_candidates = []
+        for item in data:
+            if _has_type(item, "VideoObject"):
+                resolved_video = {}
+                for prop in [
+                    "contentUrl",
+                    "embedUrl",
+                    "url",
+                    "thumbnailUrl",
+                    "thumbnail",
+                ]:
+                    value = extract_property(item, prop)
+                    if value is not None:
+                        resolved_video[prop] = value
+                if resolved_video:
+                    video_candidates.append(resolved_video)
+
         recipe_properties = Recipe.PROPERTY_FIELDS
         uniform_recipe = {}
         for prop in recipe_properties:
             value = extract_property(recipe, prop)
             if value is not None:
                 uniform_recipe[prop] = value
+
+        if not uniform_recipe.get("video"):
+            maybe_video = _single_video_candidate(video_candidates)
+            if maybe_video:
+                uniform_recipe["video"] = maybe_video
 
         return uniform_recipe

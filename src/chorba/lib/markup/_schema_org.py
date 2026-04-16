@@ -33,6 +33,72 @@ def _format_duration_ms(duration_ms: int | None) -> str | None:
     return f"{hours} hr {minutes} min"
 
 
+def _first_url(value) -> str | None:
+    if isinstance(value, str):
+        return value
+
+    if isinstance(value, dict):
+        for key in ["contentUrl", "embedUrl", "url", "thumbnailUrl"]:
+            candidate = _first_url(value.get(key))
+            if candidate:
+                return candidate
+        return None
+
+    if isinstance(value, list):
+        for item in value:
+            candidate = _first_url(item)
+            if candidate:
+                return candidate
+
+    return None
+
+
+def _image_url(image) -> str | None:
+    return _first_url(image)
+
+
+def _thumbnail_url(thumbnail) -> str | None:
+    return _first_url(thumbnail)
+
+
+def _video_url(video) -> str | None:
+    if isinstance(video, str):
+        return video
+
+    if isinstance(video, dict):
+        for key in ["contentUrl", "embedUrl", "url"]:
+            candidate = _first_url(video.get(key))
+            if candidate:
+                return candidate
+
+    if isinstance(video, list):
+        for item in video:
+            candidate = _video_url(item)
+            if candidate:
+                return candidate
+
+    return None
+
+
+def _video_thumbnail_url(video) -> str | None:
+    if isinstance(video, dict):
+        candidate = _first_url(video.get("thumbnailUrl"))
+        if candidate:
+            return candidate
+
+        thumbnail = video.get("thumbnail")
+        if thumbnail is not None:
+            return _first_url(thumbnail)
+
+    if isinstance(video, list):
+        for item in video:
+            candidate = _video_thumbnail_url(item)
+            if candidate:
+                return candidate
+
+    return None
+
+
 @dataclass
 class Ingredient:
     name: str
@@ -46,6 +112,10 @@ class Recipe:
         "recipeInstructions",
         "prepTime",
         "cookTime",
+        "totalTime",
+        "image",
+        "thumbnailUrl",
+        "video",
     ]
     _data: dict = Field(exclude=True)
 
@@ -110,12 +180,30 @@ class Recipe:
     def _cook_time_ms(self) -> int | None:
         return _parse_duration_ms(self._data.get("cookTime"))
 
+    @property
+    def _total_time_ms(self) -> int | None:
+        return _parse_duration_ms(self._data.get("totalTime"))
+
     @computed_field
     @property
     def time(self) -> str | None:
-        duration_ms = self._prep_time_ms or self._cook_time_ms
+        duration_ms = self._prep_time_ms or self._cook_time_ms or self._total_time_ms
 
         if self._prep_time_ms and self._cook_time_ms:
             duration_ms = self._prep_time_ms + self._cook_time_ms
 
         return _format_duration_ms(duration_ms)
+
+    @computed_field
+    @property
+    def video_url(self) -> str | None:
+        return _video_url(self._data.get("video"))
+
+    @computed_field
+    @property
+    def thumbnail_url(self) -> str | None:
+        return (
+            _thumbnail_url(self._data.get("thumbnailUrl"))
+            or _image_url(self._data.get("image"))
+            or _video_thumbnail_url(self._data.get("video"))
+        )
