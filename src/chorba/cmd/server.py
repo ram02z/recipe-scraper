@@ -1,10 +1,20 @@
+from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI
+
+from chorba.lib.markup._schema_org import ensure_ingredient_parser_ready
 from chorba.web.routes import router
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    ensure_ingredient_parser_ready()
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Chorba API")
+    app = FastAPI(title="Chorba API", lifespan=lifespan)
 
     app.include_router(router)
 
