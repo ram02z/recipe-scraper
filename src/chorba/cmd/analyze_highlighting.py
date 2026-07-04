@@ -159,8 +159,8 @@ def ingredient_candidates(ingredient: dict) -> tuple[set[str], set[str], set[str
     return exact, multi, single
 
 
-def classify_segment_match(segment_text: str, ingredient: dict) -> str:
-    candidate = segment_text.strip().lower()
+def classify_highlight_match(highlight_text: str, ingredient: dict) -> str:
+    candidate = highlight_text.strip().lower()
     exact, multi, single = ingredient_candidates(ingredient)
     if candidate in exact:
         return "exact_name"
@@ -231,84 +231,85 @@ def detect_parser_name_issues(
     return issues
 
 
-def detect_segment_issues(
+def detect_highlight_issues(
     host: str, url: str, step: dict, ingredient_lookup: dict[str, dict]
 ) -> tuple[list[HighlightIssue], Counter]:
     issues = []
     counters = Counter()
 
-    for segment in step.get("segments", []):
-        if segment.get("type") != "ingredient":
+    for highlight in step.get("highlights", []):
+        if highlight.get("type") != "ingredient":
             continue
 
-        ingredient = ingredient_lookup.get(segment["id"])
-        if ingredient is None:
-            continue
+        for ingredient_id in highlight.get("ids", []):
+            ingredient = ingredient_lookup.get(ingredient_id)
+            if ingredient is None:
+                continue
 
-        match_type = classify_segment_match(segment["text"], ingredient)
-        counters[f"match_type:{match_type}"] += 1
+            match_type = classify_highlight_match(highlight["text"], ingredient)
+            counters[f"match_type:{match_type}"] += 1
 
-        previous_word, next_word = surrounding_words(
-            step["text"], segment["start"], segment["end"]
-        )
-
-        if match_type == "single_word_alias":
-            if next_word in DERIVED_PHRASE_WORDS and not has_punctuation_boundary(
-                step["text"], segment["start"], segment["end"]
-            ):
-                issues.append(
-                    HighlightIssue(
-                        category="suspicious_single_word_alias",
-                        host=host,
-                        url=url,
-                        step_id=step["id"],
-                        step_text=step["text"],
-                        segment_text=segment["text"],
-                        ingredient_id=segment["id"],
-                        ingredient_names=ingredient.get("names", []),
-                        previous_word=previous_word,
-                        next_word=next_word,
-                        reason="Single-word alias is embedded in a likely derived phrase.",
-                    )
-                )
-            elif (
-                previous_word in CONTEXTUAL_PREVIOUS_WORDS
-                and not has_punctuation_boundary(
-                    step["text"], segment["start"], segment["end"]
-                )
-            ):
-                issues.append(
-                    HighlightIssue(
-                        category="suspicious_single_word_alias",
-                        host=host,
-                        url=url,
-                        step_id=step["id"],
-                        step_text=step["text"],
-                        segment_text=segment["text"],
-                        ingredient_id=segment["id"],
-                        ingredient_names=ingredient.get("names", []),
-                        previous_word=previous_word,
-                        next_word=next_word,
-                        reason="Single-word alias is preceded by wording that often indicates a transformed ingredient phrase.",
-                    )
-                )
-
-        if match_type == "unknown":
-            issues.append(
-                HighlightIssue(
-                    category="unknown_match_type",
-                    host=host,
-                    url=url,
-                    step_id=step["id"],
-                    step_text=step["text"],
-                    segment_text=segment["text"],
-                    ingredient_id=segment["id"],
-                    ingredient_names=ingredient.get("names", []),
-                    previous_word=previous_word,
-                    next_word=next_word,
-                    reason="Ingredient segment did not map back to any exact name or derived alias candidate.",
-                )
+            previous_word, next_word = surrounding_words(
+                step["text"], highlight["start"], highlight["end"]
             )
+
+            if match_type == "single_word_alias":
+                if next_word in DERIVED_PHRASE_WORDS and not has_punctuation_boundary(
+                    step["text"], highlight["start"], highlight["end"]
+                ):
+                    issues.append(
+                        HighlightIssue(
+                            category="suspicious_single_word_alias",
+                            host=host,
+                            url=url,
+                            step_id=step["id"],
+                            step_text=step["text"],
+                            segment_text=highlight["text"],
+                            ingredient_id=ingredient_id,
+                            ingredient_names=ingredient.get("names", []),
+                            previous_word=previous_word,
+                            next_word=next_word,
+                            reason="Single-word alias is embedded in a likely derived phrase.",
+                        )
+                    )
+                elif (
+                    previous_word in CONTEXTUAL_PREVIOUS_WORDS
+                    and not has_punctuation_boundary(
+                        step["text"], highlight["start"], highlight["end"]
+                    )
+                ):
+                    issues.append(
+                        HighlightIssue(
+                            category="suspicious_single_word_alias",
+                            host=host,
+                            url=url,
+                            step_id=step["id"],
+                            step_text=step["text"],
+                            segment_text=highlight["text"],
+                            ingredient_id=ingredient_id,
+                            ingredient_names=ingredient.get("names", []),
+                            previous_word=previous_word,
+                            next_word=next_word,
+                            reason="Single-word alias is preceded by wording that often indicates a transformed ingredient phrase.",
+                        )
+                    )
+
+            if match_type == "unknown":
+                issues.append(
+                    HighlightIssue(
+                        category="unknown_match_type",
+                        host=host,
+                        url=url,
+                        step_id=step["id"],
+                        step_text=step["text"],
+                        segment_text=highlight["text"],
+                        ingredient_id=ingredient_id,
+                        ingredient_names=ingredient.get("names", []),
+                        previous_word=previous_word,
+                        next_word=next_word,
+                        reason="Ingredient highlight did not map back to any exact name or derived alias candidate.",
+                    )
+                )
 
     return issues, counters
 
@@ -316,7 +317,9 @@ def detect_segment_issues(
 def detect_missing_highlights(
     host: str, url: str, step: dict, ingredients: list[dict]
 ) -> list[HighlightIssue]:
-    if any(segment.get("type") == "ingredient" for segment in step.get("segments", [])):
+    if any(
+        highlight.get("type") == "ingredient" for highlight in step.get("highlights", [])
+    ):
         return []
 
     step_text = step.get("text", "")
@@ -342,7 +345,7 @@ def detect_missing_highlights(
                         ingredient_names=ingredient.get("names", []),
                         previous_word=None,
                         next_word=None,
-                        reason="Direction contains a likely explicit multi-word ingredient mention but no highlight segments.",
+                        reason="Direction contains a likely explicit multi-word ingredient mention but no highlights.",
                     )
                 )
                 return issues
@@ -376,7 +379,7 @@ def detect_missing_highlights(
                         ingredient_names=ingredient.get("names", []),
                         previous_word=None,
                         next_word=None,
-                        reason="Direction contains a likely explicit single-word ingredient mention but no highlight segments.",
+                        reason="Direction contains a likely explicit single-word ingredient mention but no highlights.",
                     )
                 )
                 return issues
@@ -403,18 +406,18 @@ def analyze_record(record: dict) -> tuple[list[HighlightIssue], Counter]:
 
     for step in directions:
         counters["steps_total"] += 1
-        segment_issues, segment_counts = detect_segment_issues(
+        highlight_issues, highlight_counts = detect_highlight_issues(
             host, url, step, ingredient_lookup
         )
-        issues.extend(segment_issues)
-        counters.update(segment_counts)
+        issues.extend(highlight_issues)
+        counters.update(highlight_counts)
 
-        ingredient_segment_count = sum(
+        ingredient_highlight_count = sum(
             1
-            for segment in step.get("segments", [])
-            if segment.get("type") == "ingredient"
+            for highlight in step.get("highlights", [])
+            if highlight.get("type") == "ingredient"
         )
-        if ingredient_segment_count == 0:
+        if ingredient_highlight_count == 0:
             counters["steps_without_matches"] += 1
 
         issues.extend(detect_missing_highlights(host, url, step, ingredients))

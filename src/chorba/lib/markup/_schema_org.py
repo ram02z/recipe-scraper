@@ -233,26 +233,15 @@ class Ingredient:
 
 
 @dataclass
-class InstructionSegment:
-    type: Literal["instruction"]
-    text: str
-    start: int
-    end: int
-
-
-@dataclass
-class IngredientSegment:
+class IngredientHighlight:
     type: Literal["ingredient"]
     text: str
-    id: str
+    ids: list[str]
     start: int
     end: int
 
 
-DirectionSegment = Annotated[
-    InstructionSegment | IngredientSegment,
-    Field(discriminator="type"),
-]
+DirectionHighlight = Annotated[IngredientHighlight, Field(discriminator="type")]
 
 
 @dataclass
@@ -260,7 +249,7 @@ class Direction:
     id: str
     text: str
     section: str | None
-    segments: list[DirectionSegment]
+    highlights: list[DirectionHighlight]
 
 
 @dataclass
@@ -475,6 +464,155 @@ def _ingredient_match_candidates(
     )
 
 
+def _ingredient_names_by_text(ingredients: list[Ingredient]) -> dict[str, str]:
+    names_by_text = {}
+    for ingredient in ingredients:
+        for name in ingredient.names:
+            normalized = " ".join(name.lower().split())
+            if normalized:
+                names_by_text[normalized] = ingredient.id
+    return names_by_text
+
+
+def _groupable_suffixes(ingredients: list[Ingredient]) -> set[str]:
+    suffixes = set()
+    for ingredient in ingredients:
+        for name in ingredient.names:
+            words = name.lower().split()
+            if len(words) >= 2:
+                suffixes.add(words[-1])
+    return suffixes
+
+
+def _parse_grouped_stems(value: str) -> list[str]:
+    stems = [stem.strip().lower() for stem in re.split(r"\s*(?:,|\band\b)\s*", value)]
+    return [stem for stem in stems if stem]
+
+
+def _match_grouped_direction_ingredients(
+    text: str, ingredients: list[Ingredient]
+) -> tuple[list[tuple[int, int, list[str]]], list[tuple[str, int, int, list[str]]]]:
+    matches = []
+    grouped_references = []
+    names_by_text = _ingredient_names_by_text(ingredients)
+
+    for suffix in _groupable_suffixes(ingredients):
+        pattern = re.compile(rf"(?<!\w){re.escape(suffix)}(?!\w)", re.IGNORECASE)
+        for suffix_match in pattern.finditer(text):
+            prefix = text[: suffix_match.start()]
+            group_match = re.search(
+                r"([A-Za-z][A-Za-z'-]*(?:\s*,\s*[A-Za-z][A-Za-z'-]*)+(?:\s+and\s+[A-Za-z][A-Za-z'-]*)?|[A-Za-z][A-Za-z'-]*(?:\s+and\s+[A-Za-z][A-Za-z'-]*)+)\s+$",
+                prefix,
+                re.IGNORECASE,
+            )
+            if not group_match:
+                continue
+
+            stems = _parse_grouped_stems(group_match.group(1))
+            if len(stems) < 2:
+                continue
+
+            ids = []
+            for stem in stems:
+                ingredient_id = names_by_text.get(f"{stem} {suffix}".lower())
+                if ingredient_id is None:
+                    ids = []
+                    break
+                ids.append(ingredient_id)
+            if not ids:
+                continue
+
+            start = group_match.start(1)
+            end = suffix_match.end()
+            matches.append((start, end, ids))
+            grouped_references.append((suffix.lower(), start, end, ids))
+
+    for suffix in _groupable_suffixes(ingredients):
+        pattern = re.compile(rf"(?<!\w){re.escape(suffix)}(?!\w)", re.IGNORECASE)
+        for match in pattern.finditer(text):
+            start, end = match.span()
+            if any(
+                start >= existing_start and end <= existing_end
+                for existing_start, existing_end, _ in matches
+            ):
+                continue
+            ids = []
+            for reference_suffix, _, reference_end, reference_ids in sorted(
+                grouped_references, key=lambda item: item[1]
+            ):
+                if reference_suffix != suffix.lower() or reference_end >= start:
+                    continue
+                ids.extend(
+                    ingredient_id
+                    for ingredient_id in reference_ids
+                    if ingredient_id not in ids
+                )
+            if not ids:
+                continue
+            matches.append((start, end, ids))
+
+    return matches, grouped_references
+
+
+def _is_unintroduced_group_suffix(
+    candidate: str,
+    start: int,
+    grouped_references: list[tuple[str, int, int, list[str]]],
+) -> bool:
+    candidate = candidate.lower()
+    same_suffix_references = [
+        reference
+        for reference in grouped_references
+        if reference[0] == candidate
+    ]
+    if not same_suffix_references:
+        return False
+
+    has_prior_reference = any(
+        reference_end < start for _, _, reference_end, _ in same_suffix_references
+    )
+    has_later_reference = any(
+        reference_start > start for _, reference_start, _, _ in same_suffix_references
+    )
+    return has_later_reference and not has_prior_reference
+
+
+def _extend_match_with_amount(
+    text: str, start: int, ingredient: Ingredient
+) -> int:
+    best_start = start
+    for amount_text in _ingredient_amount_aliases(ingredient):
+        match = re.search(
+            rf"(?<!\w){re.escape(amount_text)}\s+$",
+            text[:start],
+            re.IGNORECASE,
+        )
+        if match and match.start() < best_start:
+            best_start = match.start()
+    return best_start
+
+
+def _ingredient_amount_aliases(ingredient: Ingredient) -> list[str]:
+    aliases = []
+    for amount in ingredient.amounts:
+        amount_text = amount.text.strip()
+        if amount_text:
+            aliases.append(amount_text)
+
+    lowered_sentence = ingredient.sentence.lower()
+    for name in ingredient.names:
+        lowered_name = name.lower()
+        name_start = lowered_sentence.find(lowered_name)
+        if name_start <= 0:
+            continue
+
+        amount_text = ingredient.sentence[:name_start].strip(" ,")
+        if amount_text:
+            aliases.append(amount_text)
+
+    return list(dict.fromkeys(alias for alias in aliases if alias))
+
+
 def _is_extended_single_word_alias(
     text: str,
     start: int,
@@ -508,9 +646,10 @@ def _is_extended_single_word_alias(
 
 def _match_direction_ingredients(
     text: str, ingredients: list[Ingredient]
-) -> list[tuple[int, int, str]]:
-    matches = []
-    occupied_ranges = []
+) -> list[tuple[int, int, list[str]]]:
+    matches, grouped_references = _match_grouped_direction_ingredients(text, ingredients)
+    occupied_ranges = [(start, end) for start, end, _ in matches]
+    ingredient_lookup = {ingredient.id: ingredient for ingredient in ingredients}
 
     for ingredient_id, candidate, is_single_word_alias in _ingredient_match_candidates(
         ingredients
@@ -518,6 +657,12 @@ def _match_direction_ingredients(
         pattern = re.compile(rf"(?<!\w){re.escape(candidate)}(?!\w)", re.IGNORECASE)
         for match in pattern.finditer(text):
             start, end = match.span()
+            ingredient = ingredient_lookup[ingredient_id]
+            start = _extend_match_with_amount(text, start, ingredient)
+            if is_single_word_alias and _is_unintroduced_group_suffix(
+                candidate, start, grouped_references
+            ):
+                continue
             if is_single_word_alias and _is_extended_single_word_alias(
                 text, start, end, ingredient_id, candidate, ingredients
             ):
@@ -527,7 +672,7 @@ def _match_direction_ingredients(
                 for existing_start, existing_end in occupied_ranges
             ):
                 continue
-            matches.append((start, end, ingredient_id))
+            matches.append((start, end, [ingredient_id]))
             occupied_ranges.append((start, end))
 
     matches.sort(key=lambda item: item[0])
@@ -535,49 +680,23 @@ def _match_direction_ingredients(
     return matches
 
 
-def _build_direction_segments(
+def _build_direction_highlights(
     text: str, ingredients: list[Ingredient]
-) -> list[DirectionSegment]:
+) -> list[DirectionHighlight]:
     matches = _match_direction_ingredients(text, ingredients)
-    if not matches:
-        return [
-            InstructionSegment(type="instruction", text=text, start=0, end=len(text))
-        ]
-
-    segments = []
-    cursor = 0
-    for start, end, ingredient_id in matches:
-        if cursor < start:
-            segments.append(
-                InstructionSegment(
-                    type="instruction",
-                    text=text[cursor:start],
-                    start=cursor,
-                    end=start,
-                )
-            )
-        segments.append(
-            IngredientSegment(
+    highlights = []
+    for start, end, ingredient_ids in matches:
+        highlights.append(
+            IngredientHighlight(
                 type="ingredient",
                 text=text[start:end],
-                id=ingredient_id,
+                ids=ingredient_ids,
                 start=start,
                 end=end,
             )
         )
-        cursor = end
 
-    if cursor < len(text):
-        segments.append(
-            InstructionSegment(
-                type="instruction",
-                text=text[cursor:],
-                start=cursor,
-                end=len(text),
-            )
-        )
-
-    return segments
+    return highlights
 
 
 @dataclass
@@ -620,13 +739,13 @@ class Recipe:
         for index, (section, text) in enumerate(
             _extract_direction_steps(self._data.get("recipeInstructions", []))
         ):
-            segments = _build_direction_segments(text, ingredients)
+            highlights = _build_direction_highlights(text, ingredients)
             directions.append(
                 Direction(
                     id=f"step_{index}",
                     text=text,
                     section=section,
-                    segments=segments,
+                    highlights=highlights,
                 )
             )
 

@@ -111,7 +111,7 @@ def test_falls_back_when_parser_raises():
     )
 
 
-def test_directions_include_linked_segments():
+def test_directions_include_linked_highlights():
     recipe = _schema_org.Recipe(
         {
             "name": "Test",
@@ -127,31 +127,229 @@ def test_directions_include_linked_segments():
             id="step_0",
             text="Cook the garlic and onion until soft.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction", text="Cook the ", start=0, end=9
-                ),
-                _schema_org.IngredientSegment(
+            highlights=[
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="garlic",
-                    id="ingredient_0",
+                    ids=["ingredient_0"],
                     start=9,
                     end=15,
                 ),
-                _schema_org.InstructionSegment(
-                    type="instruction", text=" and ", start=15, end=20
-                ),
-                _schema_org.IngredientSegment(
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="onion",
-                    id="ingredient_1",
+                    ids=["ingredient_1"],
                     start=20,
                     end=25,
                 ),
-                _schema_org.InstructionSegment(
-                    type="instruction", text=" until soft.", start=25, end=37
-                ),
             ],
+        )
+    ]
+
+
+def test_directions_join_grouped_ingredient_list_with_shared_suffix():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": [
+                "1 tsp fennel seeds",
+                "1 tsp cumin seeds",
+                "1 tsp coriander seeds",
+            ],
+            "recipeInstructions": [
+                "Toast the fennel, cumin and coriander seeds in a dry frying pan."
+            ],
+        }
+    )
+
+    assert recipe.directions[0].highlights == [
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="fennel, cumin and coriander seeds",
+            ids=["ingredient_0", "ingredient_1", "ingredient_2"],
+            start=10,
+            end=43,
+        )
+    ]
+
+
+def test_directions_reuse_grouped_suffix_reference_within_same_step():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": [
+                "1 tsp fennel seeds",
+                "1 tsp cumin seeds",
+                "1 tsp coriander seeds",
+            ],
+            "recipeInstructions": [
+                "Toast the fennel, cumin and coriander seeds. Pour seeds into a grinder."
+            ],
+        }
+    )
+
+    assert recipe.directions[0].highlights == [
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="fennel, cumin and coriander seeds",
+            ids=["ingredient_0", "ingredient_1", "ingredient_2"],
+            start=10,
+            end=43,
+        ),
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="seeds",
+            ids=["ingredient_0", "ingredient_1", "ingredient_2"],
+            start=50,
+            end=55,
+        ),
+    ]
+
+
+def test_directions_do_not_reuse_grouped_suffix_before_group_is_introduced():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": [
+                "1 tsp fennel seeds",
+                "1 tsp cumin seeds",
+                "1 tsp coriander seeds",
+            ],
+            "recipeInstructions": [
+                "Pour seeds into a grinder. Toast the fennel, cumin and coriander seeds."
+            ],
+        }
+    )
+
+    assert recipe.directions[0].highlights == [
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="fennel, cumin and coriander seeds",
+            ids=["ingredient_0", "ingredient_1", "ingredient_2"],
+            start=37,
+            end=70,
+        )
+    ]
+
+
+def test_directions_reuse_grouped_suffix_from_prior_groups_only():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": [
+                "1 tsp fennel seeds",
+                "1 tsp cumin seeds",
+                "1 tbsp pumpkin seeds",
+                "1 tbsp sunflower seeds",
+            ],
+            "recipeInstructions": [
+                "Toast fennel and cumin seeds. Add seeds to the bowl. Toast pumpkin and sunflower seeds."
+            ],
+        }
+    )
+
+    assert recipe.directions[0].highlights == [
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="fennel and cumin seeds",
+            ids=["ingredient_0", "ingredient_1"],
+            start=6,
+            end=28,
+        ),
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="seeds",
+            ids=["ingredient_0", "ingredient_1"],
+            start=34,
+            end=39,
+        ),
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="pumpkin and sunflower seeds",
+            ids=["ingredient_2", "ingredient_3"],
+            start=59,
+            end=86,
+        ),
+    ]
+
+
+def test_directions_reuse_grouped_suffix_from_all_prior_groups():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": [
+                "1 tsp fennel seeds",
+                "1 tsp cumin seeds",
+                "1 tbsp pumpkin seeds",
+                "1 tbsp sunflower seeds",
+            ],
+            "recipeInstructions": [
+                "Toast fennel and cumin seeds. Toast pumpkin and sunflower seeds. Add seeds to the bowl."
+            ],
+        }
+    )
+
+    assert recipe.directions[0].highlights == [
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="fennel and cumin seeds",
+            ids=["ingredient_0", "ingredient_1"],
+            start=6,
+            end=28,
+        ),
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="pumpkin and sunflower seeds",
+            ids=["ingredient_2", "ingredient_3"],
+            start=36,
+            end=63,
+        ),
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="seeds",
+            ids=["ingredient_0", "ingredient_1", "ingredient_2", "ingredient_3"],
+            start=69,
+            end=74,
+        ),
+    ]
+
+
+def test_directions_include_parsed_amount_with_ingredient_highlight():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": ["2 tbsp olive oil"],
+            "recipeInstructions": ["Add 2 tbsp olive oil to the pan."],
+        }
+    )
+
+    assert recipe.directions[0].highlights == [
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="2 tbsp olive oil",
+            ids=["ingredient_0"],
+            start=4,
+            end=20,
+        )
+    ]
+
+
+def test_directions_do_not_highlight_unmatched_quantities():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": ["1 tsp fennel seeds"],
+            "recipeInstructions": ["Toast the fennel seeds for about 3 minutes."],
+        }
+    )
+
+    assert recipe.directions[0].highlights == [
+        _schema_org.IngredientHighlight(
+            type="ingredient",
+            text="fennel seeds",
+            ids=["ingredient_0"],
+            start=10,
+            end=22,
         )
     ]
 
@@ -170,20 +368,14 @@ def test_directions_prefer_longest_ingredient_match():
             id="step_0",
             text="Brown the ground beef in a skillet.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction", text="Brown the ", start=0, end=10
-                ),
-                _schema_org.IngredientSegment(
+            highlights=[
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="ground beef",
-                    id="ingredient_1",
+                    ids=["ingredient_1"],
                     start=10,
                     end=21,
-                ),
-                _schema_org.InstructionSegment(
-                    type="instruction", text=" in a skillet.", start=21, end=35
-                ),
+                )
             ],
         )
     ]
@@ -211,20 +403,14 @@ def test_directions_preserve_sections():
             id="step_0",
             text="Rinse the rice well.",
             section="Rice",
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction", text="Rinse the ", start=0, end=10
-                ),
-                _schema_org.IngredientSegment(
+            highlights=[
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="rice",
-                    id="ingredient_0",
+                    ids=["ingredient_0"],
                     start=10,
                     end=14,
-                ),
-                _schema_org.InstructionSegment(
-                    type="instruction", text=" well.", start=14, end=20
-                ),
+                )
             ],
         )
     ]
@@ -249,33 +435,21 @@ def test_directions_match_safe_suffix_aliases():
             id="step_0",
             text="Heat the olive oil, then rinse the rice and cook it.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction", text="Heat the ", start=0, end=9
-                ),
-                _schema_org.IngredientSegment(
+            highlights=[
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="olive oil",
-                    id="ingredient_0",
+                    ids=["ingredient_0"],
                     start=9,
                     end=18,
                 ),
-                _schema_org.InstructionSegment(
-                    type="instruction",
-                    text=", then rinse the ",
-                    start=18,
-                    end=35,
-                ),
-                _schema_org.IngredientSegment(
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="rice",
-                    id="ingredient_1",
+                    ids=["ingredient_1"],
                     start=35,
                     end=39,
-                ),
-                _schema_org.InstructionSegment(
-                    type="instruction", text=" and cook it.", start=39, end=52
-                ),
+                )
             ],
         )
     ]
@@ -295,14 +469,7 @@ def test_directions_do_not_match_overly_generic_single_word_aliases():
             id="step_0",
             text="Heat the oil in a pan.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction",
-                    text="Heat the oil in a pan.",
-                    start=0,
-                    end=22,
-                )
-            ],
+            highlights=[],
         )
     ]
 
@@ -321,14 +488,7 @@ def test_directions_do_not_match_single_word_alias_inside_derived_phrase():
             id="step_0",
             text="Top with garlic chips before serving.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction",
-                    text="Top with garlic chips before serving.",
-                    start=0,
-                    end=37,
-                )
-            ],
+            highlights=[],
         )
     ]
 
@@ -349,26 +509,14 @@ def test_directions_do_not_match_single_word_alias_inside_reserved_phrase():
             id="step_0",
             text="Top with herbs and drizzle over reserved pepper oil.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction",
-                    text="Top with ",
-                    start=0,
-                    end=9,
-                ),
-                _schema_org.IngredientSegment(
+            highlights=[
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="herbs",
-                    id="ingredient_1",
+                    ids=["ingredient_1"],
                     start=9,
                     end=14,
-                ),
-                _schema_org.InstructionSegment(
-                    type="instruction",
-                    text=" and drizzle over reserved pepper oil.",
-                    start=14,
-                    end=52,
-                ),
+                )
             ],
         )
     ]
@@ -388,14 +536,7 @@ def test_directions_do_not_match_transformed_single_word_aliases():
             id="step_0",
             text="Top with whipped cream and serve with fried tofu.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction",
-                    text="Top with whipped cream and serve with fried tofu.",
-                    start=0,
-                    end=49,
-                )
-            ],
+            highlights=[],
         )
     ]
 
@@ -414,30 +555,21 @@ def test_directions_still_match_standalone_single_word_aliases():
             id="step_0",
             text="Rinse the rice well, then add the onion.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction", text="Rinse the ", start=0, end=10
-                ),
-                _schema_org.IngredientSegment(
+            highlights=[
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="rice",
-                    id="ingredient_0",
+                    ids=["ingredient_0"],
                     start=10,
                     end=14,
                 ),
-                _schema_org.InstructionSegment(
-                    type="instruction", text=" well, then add the ", start=14, end=34
-                ),
-                _schema_org.IngredientSegment(
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="onion",
-                    id="ingredient_1",
+                    ids=["ingredient_1"],
                     start=34,
                     end=39,
-                ),
-                _schema_org.InstructionSegment(
-                    type="instruction", text=".", start=39, end=40
-                ),
+                )
             ],
         )
     ]
@@ -459,30 +591,21 @@ def test_directions_match_single_word_alias_after_verb_context():
             id="step_0",
             text="Mix the milk and yeast together, then boil pasta till done.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction", text="Mix the milk and ", start=0, end=17
-                ),
-                _schema_org.IngredientSegment(
+            highlights=[
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="yeast",
-                    id="ingredient_0",
+                    ids=["ingredient_0"],
                     start=17,
                     end=22,
                 ),
-                _schema_org.InstructionSegment(
-                    type="instruction", text=" together, then boil ", start=22, end=43
-                ),
-                _schema_org.IngredientSegment(
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="pasta",
-                    id="ingredient_1",
+                    ids=["ingredient_1"],
                     start=43,
                     end=48,
-                ),
-                _schema_org.InstructionSegment(
-                    type="instruction", text=" till done.", start=48, end=59
-                ),
+                )
             ],
         )
     ]
@@ -504,33 +627,21 @@ def test_directions_match_single_word_alias_with_preparation_extension():
             id="step_0",
             text="Begin placing cucumber rounds in a bowl and dust with flour as needed.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction", text="Begin placing ", start=0, end=14
-                ),
-                _schema_org.IngredientSegment(
+            highlights=[
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="cucumber",
-                    id="ingredient_0",
+                    ids=["ingredient_0"],
                     start=14,
                     end=22,
                 ),
-                _schema_org.InstructionSegment(
-                    type="instruction",
-                    text=" rounds in a bowl and dust with ",
-                    start=22,
-                    end=54,
-                ),
-                _schema_org.IngredientSegment(
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="flour",
-                    id="ingredient_1",
+                    ids=["ingredient_1"],
                     start=54,
                     end=59,
-                ),
-                _schema_org.InstructionSegment(
-                    type="instruction", text=" as needed.", start=59, end=70
-                ),
+                )
             ],
         )
     ]
@@ -550,23 +661,14 @@ def test_directions_match_single_word_alias_with_any_determiner():
             id="step_0",
             text="Trim any almonds sticking out of the edges.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction", text="Trim any ", start=0, end=9
-                ),
-                _schema_org.IngredientSegment(
+            highlights=[
+                _schema_org.IngredientHighlight(
                     type="ingredient",
                     text="almonds",
-                    id="ingredient_0",
+                    ids=["ingredient_0"],
                     start=9,
                     end=16,
-                ),
-                _schema_org.InstructionSegment(
-                    type="instruction",
-                    text=" sticking out of the edges.",
-                    start=16,
-                    end=43,
-                ),
+                )
             ],
         )
     ]
@@ -586,14 +688,7 @@ def test_directions_do_not_match_reserved_single_word_aliases():
             id="step_0",
             text="Stir through enough of the reserved fat to bind.",
             section=None,
-            segments=[
-                _schema_org.InstructionSegment(
-                    type="instruction",
-                    text="Stir through enough of the reserved fat to bind.",
-                    start=0,
-                    end=48,
-                )
-            ],
+            highlights=[],
         )
     ]
 
@@ -629,15 +724,19 @@ def test_time_is_structured_object():
     )
 
 
-def test_openapi_uses_polymorphic_direction_segments():
+def test_openapi_uses_polymorphic_direction_highlights():
     openapi = create_app().openapi()
     direction_schema = openapi["components"]["schemas"]["Direction"]
-    segment_schema = direction_schema["properties"]["segments"]["items"]
+    highlight_schema = direction_schema["properties"]["highlights"]["items"]
+    ingredient_highlight_schema = openapi["components"]["schemas"]["IngredientHighlight"]
     ingredient_amount_schema = openapi["components"]["schemas"]["IngredientAmount"]
     recipe_schema = openapi["components"]["schemas"]["Recipe"]
 
-    assert segment_schema["discriminator"]["propertyName"] == "type"
-    assert set(segment_schema["oneOf"][0].keys()) == {"$ref"}
+    assert highlight_schema["discriminator"]["propertyName"] == "type"
+    assert set(highlight_schema["oneOf"][0].keys()) == {"$ref"}
+    assert ingredient_highlight_schema["properties"]["ids"]["items"] == {
+        "type": "string"
+    }
     assert ingredient_amount_schema["properties"]["unit"]["anyOf"] == [
         {"type": "string"},
         {"type": "null"},

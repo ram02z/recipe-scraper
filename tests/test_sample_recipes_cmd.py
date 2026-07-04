@@ -67,16 +67,14 @@ def test_serialize_recipe_uses_api_shape():
                 "id": "step_0",
                 "text": "Cook the onion.",
                 "section": None,
-                "segments": [
-                    {"type": "instruction", "text": "Cook the ", "start": 0, "end": 9},
+                "highlights": [
                     {
                         "type": "ingredient",
                         "text": "onion",
-                        "id": "ingredient_0",
+                        "ids": ["ingredient_0"],
                         "start": 9,
                         "end": 14,
                     },
-                    {"type": "instruction", "text": ".", "start": 14, "end": 15},
                 ],
             }
         ],
