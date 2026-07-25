@@ -25,6 +25,7 @@ class RecipeScraper:
 
     def scrape_from_url(self, url: str) -> Optional[Recipe]:
         response = requests.get(url, impersonate="chrome")
+        response.raise_for_status()
         html = response.text
 
         return self.scrape(html)
@@ -45,14 +46,3 @@ class RecipeScraper:
                 return Recipe(recipe_data)
 
         return None
-
-
-if __name__ == "__main__":
-    scraper = RecipeScraper()
-    recipe = scraper.scrape_from_url("https://www.iankewks.com/classic-orange-chicken/")
-    if not recipe:
-        print("No recipe found")
-    else:
-        print(recipe.title)
-        print(recipe.ingredients)
-        print(recipe.directions)
