@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
@@ -108,10 +109,18 @@ class PostgresRecipeReportRepository:
 
 
 def create_recipe_report_pool(database_url: str) -> AsyncConnectionPool:
-    return AsyncConnectionPool(
-        database_url,
-        open=False,
-        min_size=0,
-        max_size=5,
-        timeout=5,
-    )
+    try:
+        connection_kwargs = conninfo_to_dict(database_url)
+    except psycopg.ProgrammingError:
+        pass
+    else:
+        return AsyncConnectionPool(
+            "",
+            kwargs=connection_kwargs,
+            open=False,
+            min_size=0,
+            max_size=5,
+            timeout=5,
+        )
+
+    raise ValueError("DATABASE_URL is invalid")

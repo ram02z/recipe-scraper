@@ -1,3 +1,5 @@
+import traceback
+
 import pytest
 from fastapi.testclient import TestClient
 from psycopg_pool import PoolClosed
@@ -5,7 +7,68 @@ from psycopg_pool import PoolClosed
 from chorba.cmd.server import create_app
 from chorba.config import Settings
 from chorba.web.body_limit import BodyLimitMiddleware
-from chorba.web.reports import PostgresRecipeReportRepository, RecipeReportUnavailable
+from chorba.web.reports import (
+    PostgresRecipeReportRepository,
+    RecipeReportUnavailable,
+    create_recipe_report_pool,
+)
+
+
+def test_create_recipe_report_pool_passes_structured_connection_parameters(monkeypatch):
+    pool_calls = []
+    expected_pool = object()
+
+    def create_pool(conninfo, **kwargs):
+        pool_calls.append((conninfo, kwargs))
+        return expected_pool
+
+    monkeypatch.setattr("chorba.web.reports.AsyncConnectionPool", create_pool)
+
+    pool = create_recipe_report_pool(
+        "postgresql://reporter:p%40ss%25word@db.example.com:5432/chorba"
+        "?sslmode=require"
+    )
+
+    assert pool is expected_pool
+    assert pool_calls == [
+        (
+            "",
+            {
+                "kwargs": {
+                    "user": "reporter",
+                    "password": "p@ss%word",
+                    "dbname": "chorba",
+                    "host": "db.example.com",
+                    "port": "5432",
+                    "sslmode": "require",
+                },
+                "open": False,
+                "min_size": 0,
+                "max_size": 5,
+                "timeout": 5,
+            },
+        )
+    ]
+
+
+def test_create_recipe_report_pool_hides_malformed_database_url_details():
+    database_url = "postgresql://reporter:secret%s2@db.example.com:5432/chorba"
+
+    with pytest.raises(ValueError) as exc_info:
+        create_recipe_report_pool(database_url)
+
+    rendered_error = "".join(
+        traceback.format_exception(
+            type(exc_info.value),
+            exc_info.value,
+            exc_info.value.__traceback__,
+        )
+    )
+    assert str(exc_info.value) == "DATABASE_URL is invalid"
+    assert exc_info.value.__context__ is None
+    assert exc_info.value.__cause__ is None
+    assert "secret%s2" not in rendered_error
+    assert "invalid percent-encoded token" not in rendered_error
 
 
 @pytest.mark.anyio
