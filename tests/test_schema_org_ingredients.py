@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from chorba.config import Settings
 from chorba.cmd.server import create_app
 from chorba.lib.markup import _schema_org
 
@@ -767,7 +768,15 @@ def test_ensure_ingredient_parser_ready_warms_once():
 
 def test_app_startup_warms_ingredient_parser():
     with patch("chorba.cmd.server.ensure_ingredient_parser_ready") as ready:
-        with TestClient(create_app()):
+        with TestClient(
+            create_app(
+                settings=Settings(
+                    database_url="postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+                    api_version="test-api",
+                ),
+                report_repository=None,
+            )
+        ):
             pass
 
     ready.assert_called_once_with()

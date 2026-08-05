@@ -20,6 +20,17 @@ jobs:
       - name: Install the latest version of uv
         uses: astral-sh/setup-uv@v7
 
+      - name: Run unit tests
+        run: uv run pytest
+
+      - name: Set API version
+        run: |
+          API_VERSION="$(uv version --short)-${GITHUB_SHA::7}"
+          uv run fastapi cloud env set API_VERSION "$API_VERSION"
+        env:
+          FASTAPI_CLOUD_TOKEN: ${{ secrets.FASTAPI_CLOUD_TOKEN }}
+          FASTAPI_CLOUD_APP_ID: ${{ secrets.FASTAPI_CLOUD_APP_ID }}
+
       - name: Deploy to FastAPI Cloud
         run: uv run fastapi deploy
         env:
