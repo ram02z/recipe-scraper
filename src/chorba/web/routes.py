@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from starlette.background import BackgroundTask
 
 from chorba.lib.markup.scraper import RecipeScraper
-from chorba.web.models import RecipeReportRequest, RecipeResponse
+from chorba.web.models import HealthResponse, RecipeReportRequest, RecipeResponse
 from chorba.web.reports import RecipeReportUnavailable, UserRecipeReport
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,11 @@ def _settings(request: Request):
 
 def _report_repository(request: Request):
     return getattr(request.app.state, "recipe_report_repository", None)
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health(request: Request):
+    return HealthResponse(status="ok", api_version=_settings(request).api_version)
 
 
 @router.post("/recipe/report", status_code=204, response_class=Response)

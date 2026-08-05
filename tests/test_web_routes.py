@@ -77,6 +77,13 @@ def request(method, app, url, **kwargs):
         return client.request(method, url, **kwargs)
 
 
+def test_health_endpoint_returns_status_and_api_version():
+    response = request("GET", create_test_app(api_version="0.1.0-abcdef0"), "/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "api_version": "0.1.0-abcdef0"}
+
+
 def test_recipe_endpoint_returns_422_when_recipe_cannot_be_parsed(monkeypatch):
     monkeypatch.setattr(routes, "recipe_scraper", EmptyRecipeScraper())
 

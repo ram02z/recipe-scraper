@@ -12,6 +12,11 @@ class RecipeResponse(BaseModel):
     recipe: Recipe
 
 
+class HealthResponse(BaseModel):
+    status: str
+    api_version: str
+
+
 class UserReportCategory(StrEnum):
     INGREDIENT_PARSING = "ingredient_parsing"
     DIRECTIONS = "directions"
