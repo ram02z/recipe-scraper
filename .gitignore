@@ -12,4 +12,5 @@ wheels/
 
 # Non-project files
 *.md
+docs/
 data/

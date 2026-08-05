@@ -1,0 +1,57 @@
+name: Database
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - supabase/**
+      - scripts/create-database-backup.sh
+      - .github/workflows/database.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy production migrations
+    runs-on: ubuntu-latest
+    concurrency:
+      group: supabase-production
+      cancel-in-progress: false
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      BACKUP_AGE_RECIPIENT: ${{ vars.BACKUP_AGE_RECIPIENT }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.111.0
+
+      - name: Install age
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes age
+
+      - name: Link Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Create encrypted pre-deploy backup
+        run: scripts/create-database-backup.sh pre-deploy backups/pre-deploy
+
+      - name: Upload encrypted pre-deploy backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-pre-deploy-backup-${{ github.run_id }}
+          path: backups/pre-deploy/*
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Push migrations to production
+        run: supabase db push --password "$SUPABASE_DB_PASSWORD"
