@@ -25,8 +25,15 @@ jobs:
 
       - name: Set API version
         run: |
-          API_VERSION="$(uv version --short)-${GITHUB_SHA::7}"
-          uv run fastapi cloud env set API_VERSION "$API_VERSION"
+          export API_VERSION="$(uv version --short)-${GITHUB_SHA::7}"
+          # Use the API directly until the CLI supports deploy-token auth for env commands:
+          # https://github.com/fastapilabs/fastapi-cloud-cli/issues/312
+          curl --fail-with-body \
+            --request POST \
+            --url "https://api.fastapicloud.com/api/v1/apps/${FASTAPI_CLOUD_APP_ID}/environment-variables/" \
+            --header "Authorization: Bearer ${FASTAPI_CLOUD_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data "{\"name\":\"API_VERSION\",\"value\":\"${API_VERSION}\",\"is_secret\":false}"
         env:
           FASTAPI_CLOUD_TOKEN: ${{ secrets.FASTAPI_CLOUD_TOKEN }}
           FASTAPI_CLOUD_APP_ID: ${{ secrets.FASTAPI_CLOUD_APP_ID }}
