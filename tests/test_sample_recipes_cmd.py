@@ -60,6 +60,7 @@ def test_serialize_recipe_uses_api_shape():
                 "preparation": "sliced",
                 "comment": None,
                 "purpose": None,
+                "section": None,
             }
         ],
         "directions": [

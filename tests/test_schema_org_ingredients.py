@@ -33,7 +33,69 @@ def test_parses_basic_ingredient_fields():
         preparation="cut into 2 inch chunks",
         comment=None,
         purpose=None,
+        section=None,
     )
+
+
+def test_ingredient_section_defaults_to_none():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": ["1 cup rice"],
+        }
+    )
+
+    assert recipe.ingredients[0].section is None
+
+
+def test_openapi_schema_includes_recipe_shape():
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    assert schemas["Recipe"]["properties"]["ingredients"] == {
+        "items": {"$ref": "#/components/schemas/Ingredient"},
+        "readOnly": True,
+        "title": "Ingredients",
+        "type": "array",
+    }
+    assert schemas["Ingredient"]["properties"]["section"] == {
+        "anyOf": [{"type": "string"}, {"type": "null"}],
+        "title": "Section",
+    }
+
+
+def test_recipe_with_ingredient_sections_returns_enriched_recipe_by_index():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": ["1 cup rice", "2 tbsp soy sauce"],
+        }
+    )
+    hydrated = recipe.with_ingredient_sections(["Rice", "Sauce"])
+
+    assert hydrated is not recipe
+    assert [ingredient.id for ingredient in hydrated.ingredients] == [
+        "ingredient_0",
+        "ingredient_1",
+    ]
+    assert [ingredient.section for ingredient in hydrated.ingredients] == [
+        "Rice",
+        "Sauce",
+    ]
+    assert [ingredient.section for ingredient in recipe.ingredients] == [None, None]
+
+
+def test_recipe_with_ingredient_sections_returns_same_recipe_when_length_mismatches():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": ["1 cup rice", "2 tbsp soy sauce"],
+        }
+    )
+
+    hydrated = recipe.with_ingredient_sections(["Rice"])
+
+    assert hydrated is recipe
+    assert [ingredient.section for ingredient in hydrated.ingredients] == [None, None]
 
 
 def test_parses_ranged_amounts_and_names():
@@ -57,6 +119,7 @@ def test_parses_ranged_amounts_and_names():
         preparation="minced",
         comment=None,
         purpose=None,
+        section=None,
     )
 
 
@@ -87,6 +150,7 @@ def test_flattens_composite_amounts():
         preparation=None,
         comment=None,
         purpose=None,
+        section=None,
     )
 
 
@@ -109,6 +173,7 @@ def test_falls_back_when_parser_raises():
         preparation=None,
         comment=None,
         purpose=None,
+        section=None,
     )
 
 
@@ -415,6 +480,26 @@ def test_directions_preserve_sections():
             ],
         )
     ]
+
+
+def test_directions_unescape_section_titles():
+    recipe = _schema_org.Recipe(
+        {
+            "name": "Test",
+            "recipeIngredient": ["1 cup rice"],
+            "recipeInstructions": [
+                {
+                    "@type": "HowToSection",
+                    "name": "Rice &amp; Assembly",
+                    "itemListElement": [
+                        {"@type": "HowToStep", "text": "Rinse the rice well."}
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert recipe.directions[0].section == "Rice & Assembly"
 
 
 def test_directions_match_safe_suffix_aliases():

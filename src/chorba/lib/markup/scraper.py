@@ -2,6 +2,7 @@ from typing import Optional
 import extruct
 from curl_cffi import requests
 
+from chorba.lib.markup._hydrators import HtmlRecipeHydrator, IngredientSectionHydrator
 from chorba.lib.markup._schema_org import Recipe
 from chorba.lib.markup._processors import (
     SyntaxProcessor,
@@ -12,11 +13,18 @@ from chorba.lib.markup._processors import (
 
 
 class RecipeScraper:
-    def __init__(self):
-        self._processors: list[SyntaxProcessor] = [
+    def __init__(
+        self,
+        processors: list[SyntaxProcessor] | None = None,
+        hydrators: list[HtmlRecipeHydrator] | None = None,
+    ):
+        self._processors: list[SyntaxProcessor] = processors or [
             JSONLDProcessor(),
             MicrodataProcessor(),
             RDFaProcessor(),
+        ]
+        self._hydrators: list[HtmlRecipeHydrator] = hydrators or [
+            IngredientSectionHydrator()
         ]
 
     @property
@@ -43,6 +51,14 @@ class RecipeScraper:
             recipe_data = processor.extract_recipe(data)
 
             if recipe_data:
-                return Recipe(recipe_data)
+                return self._hydrate(Recipe(recipe_data), html)
 
         return None
+
+    def _hydrate(self, recipe: Recipe, html: str) -> Recipe:
+        for hydrator in self._hydrators:
+            try:
+                recipe = hydrator.hydrate(recipe, html)
+            except Exception:
+                continue
+        return recipe

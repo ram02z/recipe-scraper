@@ -1,5 +1,6 @@
 from datetime import timedelta
 from fractions import Fraction
+from html import unescape
 import re
 from typing import Annotated, Literal
 
@@ -230,6 +231,7 @@ class Ingredient:
     preparation: str | None
     comment: str | None
     purpose: str | None
+    section: str | None
 
 
 @dataclass
@@ -270,7 +272,7 @@ def _optional_text(value: str | None) -> str | None:
     if value is None:
         return None
 
-    stripped = value.strip()
+    stripped = unescape(value).strip()
     return stripped or None
 
 
@@ -287,7 +289,7 @@ def _normalize_ingredient_amount(amount) -> list[IngredientAmount]:
             quantity=_fraction_to_string(amount.quantity),
             quantity_max=_fraction_to_string(amount.quantity_max),
             unit=_optional_text(amount.unit),
-            text=amount.text,
+            text=unescape(amount.text),
         )
     ]
 
@@ -308,7 +310,10 @@ def ensure_ingredient_parser_ready() -> None:
     _ingredient_parser_ready = True
 
 
-def _normalize_ingredient(sentence: str, ingredient_id: str) -> Ingredient:
+def _normalize_ingredient(
+    sentence: str, ingredient_id: str, section: str | None = None
+) -> Ingredient:
+    sentence = unescape(sentence)
     try:
         parsed = _parse_ingredient_sentence(sentence)
     except Exception:
@@ -321,6 +326,7 @@ def _normalize_ingredient(sentence: str, ingredient_id: str) -> Ingredient:
             preparation=None,
             comment=None,
             purpose=None,
+            section=section,
         )
 
     amounts = []
@@ -338,6 +344,7 @@ def _normalize_ingredient(sentence: str, ingredient_id: str) -> Ingredient:
         else None,
         comment=_optional_text(parsed.comment.text) if parsed.comment else None,
         purpose=_optional_text(parsed.purpose.text) if parsed.purpose else None,
+        section=section,
     )
 
 
@@ -345,7 +352,7 @@ def _extract_direction_steps(recipe_instructions) -> list[tuple[str | None, str]
     steps = []
 
     if isinstance(recipe_instructions, str):
-        text = recipe_instructions.strip()
+        text = unescape(recipe_instructions).strip()
         if text:
             steps.append((None, text))
         return steps
@@ -355,7 +362,7 @@ def _extract_direction_steps(recipe_instructions) -> list[tuple[str | None, str]
 
     for item in recipe_instructions:
         if isinstance(item, str):
-            text = item.strip()
+            text = unescape(item).strip()
             if text:
                 steps.append((None, text))
             continue
@@ -364,7 +371,7 @@ def _extract_direction_steps(recipe_instructions) -> list[tuple[str | None, str]
             continue
 
         if item.get("@type") == "HowToStep":
-            text = item.get("text", "").strip()
+            text = unescape(item.get("text", "")).strip()
             if text:
                 steps.append((None, text))
             continue
@@ -373,12 +380,12 @@ def _extract_direction_steps(recipe_instructions) -> list[tuple[str | None, str]
             continue
 
         section_name = item.get("name")
-        section = section_name.strip() if isinstance(section_name, str) else None
+        section = unescape(section_name).strip() if isinstance(section_name, str) else None
         for step in item.get("itemListElement", []):
             if isinstance(step, str):
-                text = step.strip()
+                text = unescape(step).strip()
             elif isinstance(step, dict) and step.get("@type") == "HowToStep":
-                text = step.get("text", "").strip()
+                text = unescape(step.get("text", "")).strip()
             else:
                 text = ""
 
@@ -713,9 +720,29 @@ class Recipe:
         "video",
     ]
     _data: dict = Field(exclude=True)
+    ingredient_section_names: list[str | None] | None = Field(default=None, exclude=True)
 
-    def __init__(self, data: dict) -> None:
-        self._data = data
+    @property
+    def _recipe_ingredient_sentences(self) -> list[str]:
+        ingredients = self._data.get("recipeIngredient", [])
+        if not isinstance(ingredients, list) or not all(
+            isinstance(item, str) for item in ingredients
+        ):
+            return []
+        return ingredients
+
+    def with_ingredient_sections(self, sections: list[str | None]) -> "Recipe":
+        if len(sections) != len(self._recipe_ingredient_sentences):
+            return self
+        return Recipe(self._data, ingredient_section_names=sections)
+
+    @property
+    def _ingredient_sections(self) -> list[str | None] | None:
+        sections = self.ingredient_section_names
+        ingredients = self._recipe_ingredient_sentences
+        if sections is None or len(sections) != len(ingredients):
+            return None
+        return sections
 
     @computed_field
     @property
@@ -725,8 +752,13 @@ class Recipe:
     @computed_field
     @property
     def ingredients(self) -> list[Ingredient]:
+        sections = self._ingredient_sections
         return [
-            _normalize_ingredient(item, f"ingredient_{index}")
+            _normalize_ingredient(
+                item,
+                f"ingredient_{index}",
+                section=sections[index] if sections is not None else None,
+            )
             for index, item in enumerate(self._data.get("recipeIngredient", []))
         ]
 
