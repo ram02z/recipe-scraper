@@ -98,27 +98,73 @@ def _ingredient_candidates(root: Selector) -> list[_IngredientCandidate]:
 def _align_ingredients(
     schema_ingredients: list[str], candidates: list[_IngredientCandidate]
 ) -> list[_IngredientCandidate] | None:
-    aligned = []
-    search_start = 0
-    for ingredient in schema_ingredients:
-        matches = []
-        for index in range(search_start, len(candidates)):
-            candidate = candidates[index]
-            if _texts_match(ingredient, candidate.text_variants):
-                matches.append((index, candidate))
-        if len(matches) != 1:
-            return None
-        match_index, candidate = matches[0]
-        aligned.append(candidate)
-        search_start = match_index + 1
-    return aligned
+    matching_indices = [
+        {
+            index
+            for index, candidate in enumerate(candidates)
+            if _texts_match(ingredient, candidate.text_variants)
+        }
+        for ingredient in schema_ingredients
+    ]
+
+    ingredient_count = len(schema_ingredients)
+    candidate_count = len(candidates)
+    alignment_counts = [
+        bytearray(candidate_count + 1) for _ in range(ingredient_count + 1)
+    ]
+    alignment_counts[ingredient_count] = bytearray([1]) * (candidate_count + 1)
+
+    for ingredient_index in range(ingredient_count - 1, -1, -1):
+        row = alignment_counts[ingredient_index]
+        next_row = alignment_counts[ingredient_index + 1]
+        matches = matching_indices[ingredient_index]
+        for candidate_index in range(candidate_count - 1, -1, -1):
+            count = row[candidate_index + 1]
+            if candidate_index in matches:
+                count += next_row[candidate_index + 1]
+            row[candidate_index] = min(2, count)
+
+    if alignment_counts[0][0] != 1:
+        return None
+
+    path = []
+    ingredient_index = 0
+    candidate_index = 0
+    while ingredient_index < ingredient_count:
+        matches = matching_indices[ingredient_index]
+        take_count = (
+            alignment_counts[ingredient_index + 1][candidate_index + 1]
+            if candidate_index in matches
+            else 0
+        )
+        skip_count = alignment_counts[ingredient_index][candidate_index + 1]
+        if take_count == 1 and skip_count == 0:
+            path.append(candidate_index)
+            ingredient_index += 1
+        candidate_index += 1
+
+    return [candidates[index] for index in path]
 
 
 def _meaningful_heading_text(text: str) -> str | None:
-    normalized = _normalize_match_text(text)
-    if not normalized or normalized in _GENERIC_HEADINGS:
+    if not _heading_key(text) or _is_ingredient_anchor(text):
         return None
     return _SPACE_RE.sub(" ", unescape(text)).strip()
+
+
+def _heading_key(text: str) -> str:
+    normalized = _normalize_match_text(text)
+    start = 0
+    end = len(normalized)
+    while start < end and unicodedata.category(normalized[start]).startswith("P"):
+        start += 1
+    while end > start and unicodedata.category(normalized[end - 1]).startswith("P"):
+        end -= 1
+    return normalized[start:end].strip()
+
+
+def _is_ingredient_anchor(text: str) -> bool:
+    return _heading_key(text) in _GENERIC_HEADINGS
 
 
 def _group_section(candidate: _IngredientCandidate) -> str | None:
@@ -133,21 +179,74 @@ def _group_section(candidate: _IngredientCandidate) -> str | None:
     return _meaningful_heading_text(" ".join(group_heading))
 
 
-def _generic_section(candidate: _IngredientCandidate) -> str | None:
-    heading_texts = candidate.selector.xpath(
-        "ancestor::*[.//li][1]/preceding-sibling::*[self::h3 or self::h4 or self::h5 or self::h6][1]//text()"
-    ).getall()
-    if not heading_texts:
-        heading_texts = candidate.selector.xpath(
-            "preceding::*[self::h3 or self::h4 or self::h5 or self::h6][1]//text()"
-        ).getall()
-    if not heading_texts:
+def _ingredient_scope(aligned: list[_IngredientCandidate]) -> Selector | None:
+    if not aligned:
         return None
-    return _meaningful_heading_text(" ".join(heading_texts))
+
+    lineages = [
+        [candidate.selector.root, *candidate.selector.root.iterancestors()]
+        for candidate in aligned
+    ]
+    for element in lineages[0]:
+        if all(element in lineage for lineage in lineages[1:]):
+            return Selector(root=element)
+    return None
 
 
-def _candidate_section(candidate: _IngredientCandidate) -> str | None:
-    return _group_section(candidate) or _generic_section(candidate)
+def _is_heading(element) -> bool:
+    return isinstance(element.tag, str) and element.tag.lower() in {
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+    }
+
+
+def _element_descendant_text(element) -> str:
+    return " ".join(element.itertext())
+
+
+def _generic_sections(
+    aligned: list[_IngredientCandidate], scope: Selector | None
+) -> list[str | None]:
+    sections: list[str | None] = [None] * len(aligned)
+    if scope is None or not isinstance(scope.root.tag, str):
+        return sections
+    if scope.root.tag.lower() in {"html", "body"}:
+        return sections
+
+    candidate_indices = {
+        candidate.selector.root: index for index, candidate in enumerate(aligned)
+    }
+    first_candidate = aligned[0].selector.root
+    anchor = None
+    for element in scope.root.iter():
+        if element is first_candidate:
+            break
+        if _is_heading(element) and _is_ingredient_anchor(
+            _element_descendant_text(element)
+        ):
+            anchor = element
+
+    active_section = None
+    headings_are_eligible = anchor is None
+    for element in scope.root.iter():
+        if _is_heading(element):
+            heading_text = _element_descendant_text(element)
+            if element is anchor:
+                headings_are_eligible = True
+                active_section = None
+            elif headings_are_eligible:
+                active_section = _meaningful_heading_text(heading_text)
+
+        candidate_index = candidate_indices.get(element)
+        if candidate_index is not None:
+            sections[candidate_index] = active_section
+
+    return sections
+
 
 
 class IngredientSectionHydrator:
@@ -162,6 +261,10 @@ class IngredientSectionHydrator:
         if aligned is None:
             return recipe
 
+        generic_sections = _generic_sections(aligned, _ingredient_scope(aligned))
         return recipe.with_ingredient_sections(
-            [_candidate_section(candidate) for candidate in aligned]
+            [
+                _group_section(candidate) or generic_sections[index]
+                for index, candidate in enumerate(aligned)
+            ]
         )
