@@ -1,10 +1,12 @@
 import logging
 
+import cachebox
 from curl_cffi import requests
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.background import BackgroundTask
 
+from chorba.lib.markup._schema_org import Recipe
 from chorba.lib.markup.scraper import RecipeScraper
 from chorba.web.models import HealthResponse, RecipeReportRequest, RecipeResponse
 from chorba.web.reports import RecipeReportUnavailable, UserRecipeReport
@@ -14,6 +16,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 recipe_scraper = RecipeScraper()
+
+
+@cachebox.cached(cachebox.LRUCache(maxsize=1000))
+def _scrape_recipe(url: str) -> Recipe | None:
+    return recipe_scraper.scrape_from_url(url)
 
 
 def _truncate_user_agent(user_agent: str | None) -> str | None:
@@ -75,19 +82,25 @@ async def _report_parse_failure(request: Request, url: str) -> None:
 
 
 @router.get("/recipe", response_model=RecipeResponse)
-async def get_recipe(url: str, request: Request):
+async def get_recipe(url: str, request: Request, response: Response):
+    response.headers["Cache-Control"] = "no-store"
     try:
-        recipe = recipe_scraper.scrape_from_url(url)
+        recipe = _scrape_recipe(url)
     except requests.RequestsError as error:
         status_code = getattr(error.response, "status_code", None)
         if status_code == 404:
-            raise HTTPException(status_code=404, detail="Recipe URL not found") from error
+            raise HTTPException(
+                status_code=404,
+                detail="Recipe URL not found",
+                headers={"Cache-Control": "no-store"},
+            ) from error
         raise
 
     if recipe is None:
         return JSONResponse(
             status_code=422,
             content={"detail": "Could not parse recipe from URL"},
+            headers={"Cache-Control": "no-store"},
             background=BackgroundTask(_report_parse_failure, request, url),
         )
 

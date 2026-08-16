@@ -1,12 +1,16 @@
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, BrokenBarrierError
 
 import pytest
 from curl_cffi import requests
+from fastapi import Response
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from chorba.cmd.server import create_app
+from chorba.lib.markup._schema_org import Recipe
 from chorba.web import routes
 
 
@@ -23,6 +27,25 @@ class EmptyRecipeScraper:
 class NotFoundRecipeScraper:
     def scrape_from_url(self, url: str):
         raise requests.RequestsError("HTTP Error 404", response=FakeResponse(404))
+
+
+class CountingRecipeScraper:
+    def __init__(self, result):
+        self.result = result
+        self.urls = []
+
+    def scrape_from_url(self, url: str):
+        self.urls.append(url)
+        if isinstance(self.result, BaseException):
+            raise self.result
+        return self.result
+
+
+@pytest.fixture(autouse=True)
+def clear_recipe_cache():
+    routes._scrape_recipe.cache_clear()
+    yield
+    routes._scrape_recipe.cache_clear()
 
 
 class FakeReportRepository:
@@ -100,6 +123,144 @@ def test_recipe_endpoint_returns_404_when_recipe_url_is_not_found(monkeypatch):
     )
 
     assert response.status_code == 404
+
+
+def test_recipe_endpoint_caches_success_and_disables_client_cache(monkeypatch):
+    url = "https://example.com/cached-success"
+    scraper = CountingRecipeScraper(
+        Recipe({"name": "Cached", "recipeIngredient": [], "recipeInstructions": []})
+    )
+    monkeypatch.setattr(routes, "recipe_scraper", scraper)
+    app = create_test_app()
+
+    first = request("GET", app, f"/recipe?url={url}")
+    second = request("GET", app, f"/recipe?url={url}")
+
+    assert first.status_code == second.status_code == 200
+    assert first.headers["cache-control"] == "no-store"
+    assert second.headers["cache-control"] == "no-store"
+    assert scraper.urls == [url]
+
+
+def test_recipe_endpoint_caches_parse_miss_and_disables_client_cache(monkeypatch):
+    scraper = CountingRecipeScraper(None)
+    monkeypatch.setattr(routes, "recipe_scraper", scraper)
+    app = create_test_app()
+
+    first = request(
+        "GET", app, "/recipe?url=https://example.com/cached-miss"
+    )
+    second = request(
+        "GET", app, "/recipe?url=https://example.com/cached-miss"
+    )
+
+    assert first.status_code == second.status_code == 422
+    assert first.headers["cache-control"] == "no-store"
+    assert second.headers["cache-control"] == "no-store"
+    assert scraper.urls == ["https://example.com/cached-miss"]
+
+
+def test_recipe_cache_single_flights_concurrent_same_url_misses(monkeypatch):
+    url = "https://example.com/concurrent-miss"
+    scraper = CountingRecipeScraper(None)
+    monkeypatch.setattr(routes, "recipe_scraper", scraper)
+    callers = 8
+    ready = Barrier(callers + 1)
+    concurrent_scrapes = Barrier(callers)
+    original_scrape = scraper.scrape_from_url
+
+    def synchronized_scrape(url):
+        result = original_scrape(url)
+        try:
+            concurrent_scrapes.wait(timeout=1)
+        except BrokenBarrierError:
+            pass
+        return result
+
+    scraper.scrape_from_url = synchronized_scrape
+
+    def scrape_concurrently():
+        ready.wait(timeout=5)
+        return routes._scrape_recipe(url)
+
+    with ThreadPoolExecutor(max_workers=callers) as executor:
+        futures = [executor.submit(scrape_concurrently) for _ in range(callers)]
+        ready.wait(timeout=5)
+        results = [future.result(timeout=5) for future in futures]
+
+    assert results == [None] * callers
+    assert scraper.urls == [url]
+
+
+def test_cached_parse_miss_schedules_report_for_each_request(monkeypatch):
+    url = "https://example.com/reported-cached-miss"
+    scraper = CountingRecipeScraper(None)
+    repository = FakeReportRepository()
+    monkeypatch.setattr(routes, "recipe_scraper", scraper)
+    app = create_test_app(repository)
+
+    first = request("GET", app, f"/recipe?url={url}")
+    second = request("GET", app, f"/recipe?url={url}")
+
+    assert first.status_code == second.status_code == 422
+    assert scraper.urls == [url]
+    assert repository.parse_failures == [
+        {
+            "recipe_url": url,
+            "api_version": "test-api",
+            "user_agent": "testclient",
+        },
+        {
+            "recipe_url": url,
+            "api_version": "test-api",
+            "user_agent": "testclient",
+        },
+    ]
+
+
+def test_recipe_endpoint_cache_uses_exact_key(monkeypatch):
+    scraper = CountingRecipeScraper(None)
+    monkeypatch.setattr(routes, "recipe_scraper", scraper)
+    app = create_test_app()
+
+    first = request("GET", app, "/recipe?url=https://example.com/a")
+    second = request("GET", app, "/recipe?url=https://example.com/b")
+
+    assert first.status_code == second.status_code == 422
+    assert scraper.urls == ["https://example.com/a", "https://example.com/b"]
+
+
+def test_recipe_endpoint_exceptions_are_not_cached(monkeypatch):
+    url = "https://example.com/not-cached"
+    scraper = CountingRecipeScraper(
+        requests.RequestsError("HTTP Error 404", response=FakeResponse(404))
+    )
+    monkeypatch.setattr(routes, "recipe_scraper", scraper)
+    app = create_test_app()
+
+    first = request("GET", app, f"/recipe?url={url}")
+    second = request("GET", app, f"/recipe?url={url}")
+
+    assert first.status_code == second.status_code == 404
+    assert first.headers["cache-control"] == "no-store"
+    assert second.headers["cache-control"] == "no-store"
+    assert scraper.urls == [url, url]
+
+
+def test_recipe_endpoint_non_404_exceptions_are_not_cached(monkeypatch):
+    url = "https://example.com/server-error"
+    scraper = CountingRecipeScraper(
+        requests.RequestsError("HTTP Error 500", response=FakeResponse(500))
+    )
+    monkeypatch.setattr(routes, "recipe_scraper", scraper)
+    app = create_test_app()
+
+    with pytest.raises(requests.RequestsError):
+        request("GET", app, f"/recipe?url={url}")
+    with pytest.raises(requests.RequestsError):
+        request("GET", app, f"/recipe?url={url}")
+
+    assert scraper.urls == [url, url]
 
 
 def test_recipe_response_schema_requires_recipe():
@@ -517,7 +678,7 @@ async def test_recipe_endpoint_defers_parse_failure_report_until_background(
             }
         )
         response = await routes.get_recipe(
-            url="https://example.com/page", request=request
+            url="https://example.com/page", request=request, response=Response()
         )
 
         assert response.status_code == 422
