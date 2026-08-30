@@ -98,6 +98,30 @@ def test_recipe_with_ingredient_sections_returns_same_recipe_when_length_mismatc
     assert [ingredient.section for ingredient in hydrated.ingredients] == [None, None]
 
 
+def test_recipe_with_ingredient_sections_cleans_section_headers():
+    recipe = _schema_org.Recipe(
+        {
+            "recipeIngredient": [
+                "1 cup rice",
+                "2 tbsp soy sauce",
+                "1 tsp salt",
+                "1 lime",
+            ]
+        }
+    )
+
+    hydrated = recipe.with_ingredient_sections(
+        ["Sauce:", "Garnish::  ", "Time: 30", ":"]
+    )
+
+    assert [ingredient.section for ingredient in hydrated.ingredients] == [
+        "Sauce",
+        "Garnish",
+        "Time: 30",
+        None,
+    ]
+
+
 def test_parses_ranged_amounts_and_names():
     ingredient = _schema_org.Recipe(
         {"name": "Test", "recipeIngredient": ["1-2 cloves garlic, minced"]}
@@ -482,7 +506,7 @@ def test_directions_preserve_sections():
     ]
 
 
-def test_directions_unescape_section_titles():
+def test_directions_unescape_and_clean_section_titles():
     recipe = _schema_org.Recipe(
         {
             "name": "Test",
@@ -490,7 +514,7 @@ def test_directions_unescape_section_titles():
             "recipeInstructions": [
                 {
                     "@type": "HowToSection",
-                    "name": "Rice &amp; Assembly",
+                    "name": "Rice &amp; Assembly::  ",
                     "itemListElement": [
                         {"@type": "HowToStep", "text": "Rinse the rice well."}
                     ],

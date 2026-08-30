@@ -348,6 +348,13 @@ def _normalize_ingredient(
     )
 
 
+def _clean_section_heading(section: str | None) -> str | None:
+    if section is None:
+        return None
+    cleaned = section.strip().rstrip(":").rstrip()
+    return cleaned or None
+
+
 def _extract_direction_steps(recipe_instructions) -> list[tuple[str | None, str]]:
     steps = []
 
@@ -380,7 +387,11 @@ def _extract_direction_steps(recipe_instructions) -> list[tuple[str | None, str]
             continue
 
         section_name = item.get("name")
-        section = unescape(section_name).strip() if isinstance(section_name, str) else None
+        section = (
+            _clean_section_heading(unescape(section_name))
+            if isinstance(section_name, str)
+            else None
+        )
         for step in item.get("itemListElement", []):
             if isinstance(step, str):
                 text = unescape(step).strip()
@@ -734,7 +745,12 @@ class Recipe:
     def with_ingredient_sections(self, sections: list[str | None]) -> "Recipe":
         if len(sections) != len(self._recipe_ingredient_sentences):
             return self
-        return Recipe(self._data, ingredient_section_names=sections)
+        return Recipe(
+            self._data,
+            ingredient_section_names=[
+                _clean_section_heading(section) for section in sections
+            ],
+        )
 
     @property
     def _ingredient_sections(self) -> list[str | None] | None:
