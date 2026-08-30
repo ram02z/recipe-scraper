@@ -3,14 +3,21 @@ from html import unescape
 import re
 from typing import Protocol
 import unicodedata
+from urllib.parse import urlparse
 
 from parsel import Selector
 
+from chorba.lib.markup._section_extractors import (
+    DEFAULT_INGREDIENT_SECTION_EXTRACTORS,
+    IngredientSectionExtractor,
+)
 from chorba.lib.markup._schema_org import Recipe
 
 
 class HtmlRecipeHydrator(Protocol):
-    def hydrate(self, recipe: Recipe, html: str) -> Recipe: ...
+    def hydrate(
+        self, recipe: Recipe, html: str, url: str | None = None
+    ) -> Recipe: ...
 
 
 @dataclass
@@ -250,8 +257,41 @@ def _generic_sections(
 
 
 class IngredientSectionHydrator:
-    def hydrate(self, recipe: Recipe, html: str) -> Recipe:
+    def __init__(
+        self,
+        ingredient_section_extractors: dict[str, IngredientSectionExtractor] | None = None,
+    ):
+        self._ingredient_section_extractors = (
+            DEFAULT_INGREDIENT_SECTION_EXTRACTORS
+            if ingredient_section_extractors is None
+            else ingredient_section_extractors
+        )
+
+    def hydrate(
+        self, recipe: Recipe, html: str, url: str | None = None
+    ) -> Recipe:
         schema_ingredients = [ingredient.sentence for ingredient in recipe.ingredients]
+        try:
+            hostname = urlparse(url).hostname if url else None
+        except ValueError:
+            hostname = None
+        extractor = (
+            self._ingredient_section_extractors.get(hostname)
+            if hostname is not None
+            else None
+        )
+        if extractor is not None:
+            try:
+                sections = extractor.extract(recipe, html)
+            except Exception:
+                sections = None
+            if (
+                isinstance(sections, list)
+                and len(sections) == len(schema_ingredients)
+                and all(section is None or isinstance(section, str) for section in sections)
+            ):
+                return recipe.with_ingredient_sections(sections)
+
         if not schema_ingredients:
             return recipe
 

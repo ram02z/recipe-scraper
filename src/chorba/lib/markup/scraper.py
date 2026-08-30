@@ -1,4 +1,5 @@
 from typing import Optional
+
 import extruct
 from curl_cffi import requests
 
@@ -36,9 +37,9 @@ class RecipeScraper:
         response.raise_for_status()
         html = response.text
 
-        return self.scrape(html)
+        return self.scrape(html, response.url)
 
-    def scrape(self, html: str) -> Optional[Recipe]:
+    def scrape(self, html: str, url: str | None = None) -> Optional[Recipe]:
         extracted_data = extruct.extract(html, syntaxes=self.syntax_names)
 
         for processor in self._processors:
@@ -51,14 +52,14 @@ class RecipeScraper:
             recipe_data = processor.extract_recipe(data)
 
             if recipe_data:
-                return self._hydrate(Recipe(recipe_data), html)
+                return self._hydrate(Recipe(recipe_data), html, url)
 
         return None
 
-    def _hydrate(self, recipe: Recipe, html: str) -> Recipe:
+    def _hydrate(self, recipe: Recipe, html: str, url: str | None = None) -> Recipe:
         for hydrator in self._hydrators:
             try:
-                recipe = hydrator.hydrate(recipe, html)
+                recipe = hydrator.hydrate(recipe, html, url)
             except Exception:
                 continue
         return recipe

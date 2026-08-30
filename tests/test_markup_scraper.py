@@ -32,8 +32,8 @@ class FakeHydrator:
     def __init__(self):
         self.calls = []
 
-    def hydrate(self, recipe, html):
-        self.calls.append((recipe, html))
+    def hydrate(self, recipe, html, url=None):
+        self.calls.append((recipe, html, url))
         return recipe.with_ingredient_sections(["Rice"])
 
 
@@ -46,18 +46,29 @@ def test_scrape_passes_recipe_and_raw_html_to_hydrators():
 
     assert recipe is not None
     assert len(hydrator.calls) == 1
-    hydrated_recipe, raw_html = hydrator.calls[0]
+    hydrated_recipe, raw_html, url = hydrator.calls[0]
     assert hydrated_recipe.title == "Test"
     assert [ingredient.sentence for ingredient in hydrated_recipe.ingredients] == [
         "1 cup rice"
     ]
     assert raw_html == '<script type="application/ld+json">{"@type":"Recipe"}</script>'
+    assert url is None
     assert recipe.ingredients[0].section == "Rice"
 
 
 class RaisingHydrator:
-    def hydrate(self, recipe, html):
+    def hydrate(self, recipe, html, url=None):
         raise RuntimeError("boom")
+
+
+class ReplacingHydrator:
+    def __init__(self, section):
+        self.section = section
+        self.calls = []
+
+    def hydrate(self, recipe, html, url=None):
+        self.calls.append((recipe, html, url))
+        return recipe.with_ingredient_sections([self.section])
 
 
 def test_scrape_ignores_hydrator_exceptions():
@@ -78,3 +89,63 @@ def test_scrape_preserves_prior_hydration_when_later_hydrator_raises():
 
     assert recipe is not None
     assert recipe.ingredients[0].section == "Rice"
+
+
+def test_scrape_passes_replacement_recipe_to_next_successful_hydrator():
+    first = ReplacingHydrator("First")
+    second = ReplacingHydrator("Second")
+
+    recipe = scraper.RecipeScraper(
+        processors=[FakeProcessor()],
+        hydrators=[first, second],
+    ).scrape('<script type="application/ld+json">{"@type":"Recipe"}</script>')
+
+    assert recipe is not None
+    assert second.calls[0][0].ingredients[0].section == "First"
+    assert recipe.ingredients[0].section == "Second"
+
+
+def test_scrape_passes_url_context_to_hydrators():
+    hydrator = FakeHydrator()
+    html = '<script type="application/ld+json">{"@type":"Recipe"}</script>'
+    url = "https://www.example.com:8443/recipes/rice?serves=4"
+
+    recipe = scraper.RecipeScraper(
+        processors=[FakeProcessor()],
+        hydrators=[hydrator],
+    ).scrape(html, url)
+
+    assert recipe is not None
+    assert recipe.ingredients[0].section == "Rice"
+    assert len(hydrator.calls) == 1
+    hydrated_recipe, raw_html, hydrated_url = hydrator.calls[0]
+    assert hydrated_recipe.title == "Test"
+    assert raw_html == html
+    assert hydrated_url == url
+
+
+class RedirectedResponse:
+    text = '<script type="application/ld+json">{"@type":"Recipe"}</script>'
+    url = "https://www.example.com/final"
+
+    def raise_for_status(self):
+        pass
+
+
+def test_scrape_from_url_passes_final_response_url_to_hydrators(monkeypatch):
+    monkeypatch.setattr(
+        scraper.requests,
+        "get",
+        lambda *args, **kwargs: RedirectedResponse(),
+    )
+    hydrator = FakeHydrator()
+
+    recipe = scraper.RecipeScraper(
+        processors=[FakeProcessor()],
+        hydrators=[hydrator],
+    ).scrape_from_url("https://redirect.example/start")
+
+    assert recipe is not None
+    assert recipe.ingredients[0].section == "Rice"
+    assert len(hydrator.calls) == 1
+    assert hydrator.calls[0][2] == "https://www.example.com/final"

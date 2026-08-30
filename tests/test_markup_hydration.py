@@ -1,6 +1,156 @@
+import pytest
 from chorba.lib.markup import _hydrators
 from chorba.lib.markup import _schema_org
 from parsel import Selector
+
+
+DEDICATED_FALLBACK_HTML = """
+<div class="wprm-recipe-ingredient-group">
+  <h3 class="wprm-recipe-ingredient-group-name">Generic</h3>
+  <ul><li>1 cup rice</li></ul>
+</div>
+"""
+
+
+class FakeSectionExtractor:
+    def __init__(self, sections):
+        self.sections = sections
+        self.calls = []
+
+    def extract(self, recipe, html):
+        self.calls.append((recipe, html))
+        return self.sections
+
+
+class RaisingSectionExtractor:
+    def extract(self, recipe, html):
+        raise RuntimeError("boom")
+
+
+def _recipe_with_rice():
+    return _schema_org.Recipe({"recipeIngredient": ["1 cup rice"]})
+
+
+def test_dedicated_extractor_dispatches_by_exact_hostname_ignoring_url_details():
+    extractor = FakeSectionExtractor(["Dedicated"])
+    recipe = _recipe_with_rice()
+
+    hydrated = _hydrators.IngredientSectionHydrator(
+        ingredient_section_extractors={"www.example.com": extractor}
+    ).hydrate(
+        recipe,
+        DEDICATED_FALLBACK_HTML,
+        "https://www.example.com:8443/recipes/rice?serves=4",
+    )
+
+    assert [ingredient.section for ingredient in hydrated.ingredients] == [
+        "Dedicated"
+    ]
+    assert extractor.calls == [(recipe, DEDICATED_FALLBACK_HTML)]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/recipes/rice",
+        "https://recipes.example.com/recipes/rice",
+        "https://unrelated.example/recipes/rice",
+    ],
+)
+def test_nonmatching_hostname_uses_generic_dom_hydration(url):
+    extractor = FakeSectionExtractor(["Dedicated"])
+
+    hydrated = _hydrators.IngredientSectionHydrator(
+        ingredient_section_extractors={"www.example.com": extractor}
+    ).hydrate(_recipe_with_rice(), DEDICATED_FALLBACK_HTML, url)
+
+    assert [ingredient.section for ingredient in hydrated.ingredients] == ["Generic"]
+    assert extractor.calls == []
+
+
+@pytest.mark.parametrize(
+    "extractor",
+    [FakeSectionExtractor(None), RaisingSectionExtractor()],
+)
+def test_failed_dedicated_extraction_uses_generic_dom_hydration(extractor):
+    hydrated = _hydrators.IngredientSectionHydrator(
+        ingredient_section_extractors={"www.example.com": extractor}
+    ).hydrate(
+        _recipe_with_rice(),
+        DEDICATED_FALLBACK_HTML,
+        "https://www.example.com/recipes/rice",
+    )
+
+    assert [ingredient.section for ingredient in hydrated.ingredients] == ["Generic"]
+
+
+@pytest.mark.parametrize(
+    "sections",
+    [
+        ["Dedicated", "Extra"],
+        [123],
+    ],
+    ids=["wrong-length", "invalid-element"],
+)
+def test_invalid_dedicated_sections_use_generic_dom_hydration(sections):
+    hydrated = _hydrators.IngredientSectionHydrator(
+        ingredient_section_extractors={
+            "www.example.com": FakeSectionExtractor(sections)
+        }
+    ).hydrate(
+        _recipe_with_rice(),
+        DEDICATED_FALLBACK_HTML,
+        "https://www.example.com/recipes/rice",
+    )
+
+    assert [ingredient.section for ingredient in hydrated.ingredients] == ["Generic"]
+
+
+def test_malformed_url_uses_generic_dom_hydration():
+    hydrated = _hydrators.IngredientSectionHydrator(
+        ingredient_section_extractors={}
+    ).hydrate(
+        _recipe_with_rice(),
+        DEDICATED_FALLBACK_HTML,
+        "https://[invalid",
+    )
+
+    assert [ingredient.section for ingredient in hydrated.ingredients] == ["Generic"]
+
+
+def test_omitted_url_uses_generic_dom_hydration():
+    extractor = FakeSectionExtractor(["Dedicated"])
+
+    hydrated = _hydrators.IngredientSectionHydrator(
+        ingredient_section_extractors={"www.example.com": extractor}
+    ).hydrate(_recipe_with_rice(), DEDICATED_FALLBACK_HTML)
+
+    assert [ingredient.section for ingredient in hydrated.ingredients] == ["Generic"]
+    assert extractor.calls == []
+
+
+def test_empty_extractor_registry_does_not_use_defaults(monkeypatch):
+    default_extractor = FakeSectionExtractor(["Default"])
+    monkeypatch.setattr(
+        _hydrators,
+        "DEFAULT_INGREDIENT_SECTION_EXTRACTORS",
+        {"www.example.com": default_extractor},
+    )
+    url = "https://www.example.com/recipes/rice"
+
+    default_hydrated = _hydrators.IngredientSectionHydrator().hydrate(
+        _recipe_with_rice(), DEDICATED_FALLBACK_HTML, url
+    )
+    empty_hydrated = _hydrators.IngredientSectionHydrator(
+        ingredient_section_extractors={}
+    ).hydrate(_recipe_with_rice(), DEDICATED_FALLBACK_HTML, url)
+
+    assert [ingredient.section for ingredient in default_hydrated.ingredients] == [
+        "Default"
+    ]
+    assert [ingredient.section for ingredient in empty_hydrated.ingredients] == [
+        "Generic"
+    ]
 
 
 def test_normalizes_spacing_entities_and_checkbox_markers():
