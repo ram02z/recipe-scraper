@@ -1,6 +1,7 @@
 from datetime import timedelta
 from fractions import Fraction
 from html import unescape
+from importlib.resources import files
 import re
 from typing import Annotated, Literal
 
@@ -292,6 +293,14 @@ def _normalize_ingredient_amount(amount) -> list[IngredientAmount]:
             text=unescape(amount.text),
         )
     ]
+
+
+def configure_ingredient_parser_nltk_data() -> None:
+    import nltk
+
+    bundled_nltk_data = str(files("chorba.lib").joinpath("nltk_data"))
+    if bundled_nltk_data not in nltk.data.path:
+        nltk.data.path.insert(0, bundled_nltk_data)
 
 
 def _parse_ingredient_sentence(sentence: str):

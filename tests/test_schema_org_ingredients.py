@@ -1,7 +1,11 @@
+from pathlib import Path
+import subprocess
+import sys
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+import chorba.lib as chorba_lib
 from chorba.config import Settings
 from chorba.cmd.server import create_app
 from chorba.lib.markup import _schema_org
@@ -873,6 +877,60 @@ def test_ensure_ingredient_parser_ready_warms_once():
 
     assert parse_ingredient.call_count == 1
     parse_ingredient.assert_called_once_with("1 cup water")
+
+
+def test_configure_ingredient_parser_nltk_data_uses_package_location():
+    import nltk
+
+    with (
+        patch.object(nltk.data, "path", []),
+        patch.object(_schema_org, "__file__", "/tmp/moved/_schema_org.py"),
+    ):
+        _schema_org.configure_ingredient_parser_nltk_data()
+
+        assert nltk.data.path == [
+            str(Path(chorba_lib.__file__).parent / "nltk_data")
+        ]
+
+
+def test_ingredient_parser_warms_without_downloading_nltk_data():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import nltk
+import nltk.downloader
+
+nltk.data.path.clear()
+
+def fail_download(*args, **kwargs):
+    raise AssertionError("NLTK data download attempted")
+
+nltk.downloader.download = fail_download
+
+from fastapi.testclient import TestClient
+
+from chorba.cmd.server import create_app
+from chorba.config import Settings
+
+app = create_app(
+    settings=Settings(
+        database_url="postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+        api_version="test-api",
+    ),
+    report_repository=None,
+)
+
+with TestClient(app):
+    pass
+""",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_app_startup_warms_ingredient_parser():

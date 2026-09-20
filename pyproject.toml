@@ -36,3 +36,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"chorba.lib" = ["nltk_data/taggers/averaged_perceptron_tagger_eng/*.json"]

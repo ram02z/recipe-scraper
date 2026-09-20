@@ -4,7 +4,10 @@ import uvicorn
 from fastapi import FastAPI
 
 from chorba.config import Settings
-from chorba.lib.markup._schema_org import ensure_ingredient_parser_ready
+from chorba.lib.markup._schema_org import (
+    configure_ingredient_parser_nltk_data,
+    ensure_ingredient_parser_ready,
+)
 from chorba.web.body_limit import BodyLimitMiddleware
 from chorba.web.reports import (
     PostgresRecipeReportRepository,
@@ -22,6 +25,7 @@ _DEFAULT_REPOSITORY = _DefaultRepository()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_ingredient_parser_nltk_data()
     ensure_ingredient_parser_ready()
     settings = getattr(app.state, "settings_override", None) or Settings.from_env()
     app.state.settings = settings
